@@ -1,0 +1,635 @@
+//! An async/sync multi-producer multi-consumer channel. Multiple threads can send and receive
+//! messages on the channel at the same time and each message will be received by only one thread.
+//!
+//! Producers can send and consumers can receive messages asynchronously or synchronously:
+//! - async send -> async receive
+//! - sync send -> sync receive
+//! - async send -> sync receive
+//! - sync send -> async receive
+//!
+//! There are two types of channels: bounded and unbounded.
+//!
+//! 1. [Bounded][`bounded()`] channel with limited capacity.
+//! 2. [Unbounded][`unbounded()`] channel with unlimited capacity.
+//!
+//! A channel has two sides: the [`Sender`] side and the [`Receiver`] side. Both sides are cloneable, meaning
+//! that they can be copied and shared among multiple threads. This allows you to have multiple
+//! threads sending and receiving messages on the same channel.
+//!
+//! When all [`Sender`]s or all [`Receiver`]s are dropped, the channel becomes closed. This means that no
+//! more messages can be sent, but remaining messages can still be received.
+//!
+//! # Examples
+//!
+//! ```
+//! let (tx, rx) = loole::unbounded();
+//!
+//! tx.send(10).unwrap();
+//! assert_eq!(rx.recv().unwrap(), 10);
+//! ```
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+mod mutex;
+mod signal;
+
+use std::fmt::Debug;
+use std::future::Future;
+use std::sync::MutexGuard;
+use std::task::{Context, Poll};
+use std::{collections::VecDeque, sync::Arc};
+
+use crate::mutex::Mutex;
+use crate::signal::{Signal, SyncSignal};
+
+/// An error that occurs when trying to receive a value from a channel after all senders have been
+/// dropped and there are no more messages in the channel.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum RecvError {
+    /// No further messages can be received because all senders have been dropped and there are no messages
+    /// waiting in the channel.
+    Disconnected,
+}
+
+impl std::error::Error for RecvError {}
+
+impl std::fmt::Display for RecvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecvError::Disconnected => f.write_str("receiving on a closed channel"),
+        }
+    }
+}
+
+/// An error that occurs when trying to send a value on a channel after all receivers have been dropped.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub struct SendError<T>(pub T);
+
+impl<T> std::error::Error for SendError<T> {}
+
+impl<T> SendError<T> {
+    /// Consumes the error, returning the message that failed to send.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::fmt::Display for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("sending on a closed channel")
+    }
+}
+
+impl<T> std::fmt::Debug for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SendError(..)")
+    }
+}
+
+/// An error that occurs when trying to send a value to a channel:
+///
+/// * When the channel is full.
+/// * When all receivers have been dropped.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum TrySendError<T> {
+    /// The message cannot be sent because the channel is full.
+    Full(T),
+    /// All receivers have been dropped, so the message cannot be received.
+    Disconnected(T),
+}
+
+impl<T> TrySendError<T> {
+    /// Consume the error and return the message that failed to send.
+    pub fn into_inner(self) -> T {
+        match self {
+            Self::Full(msg) | Self::Disconnected(msg) => msg,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for TrySendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            TrySendError::Full(..) => f.write_str("Full(..)"),
+            TrySendError::Disconnected(..) => f.write_str("Disconnected(..)"),
+        }
+    }
+}
+
+impl<T> std::fmt::Display for TrySendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TrySendError::Full(..) => f.write_str("sending on a full channel"),
+            TrySendError::Disconnected(..) => f.write_str("sending on a closed channel"),
+        }
+    }
+}
+
+impl<T> std::error::Error for TrySendError<T> {}
+
+impl<T> From<SendError<T>> for TrySendError<T> {
+    fn from(err: SendError<T>) -> Self {
+        match err {
+            SendError(item) => Self::Disconnected(item),
+        }
+    }
+}
+
+/// An error that occurs when trying to receive a value from a channel when there are no messages in the channel.
+/// If there are no messages in the channel and all senders are dropped, then the `Disconnected` error will be
+/// returned.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum TryRecvError {
+    /// An error that occurs when trying to receive a value from an empty channel.
+    Empty,
+    /// The channel has been closed because all senders have been dropped and there are no more messages waiting
+    /// in the channel.
+    Disconnected,
+}
+
+impl std::fmt::Display for TryRecvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TryRecvError::Empty => f.write_str("receiving on an empty channel"),
+            TryRecvError::Disconnected => f.write_str("channel is empty and closed"),
+        }
+    }
+}
+
+impl std::error::Error for TryRecvError {}
+
+impl From<RecvError> for TryRecvError {
+    fn from(err: RecvError) -> Self {
+        match err {
+            RecvError::Disconnected => Self::Disconnected,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SharedState<T> {
+    pending_recvs: VecDeque<Signal>,
+    send_siganls: VecDeque<Signal>,
+    pending_sends: VecDeque<T>,
+    closed: bool,
+    cap: Option<usize>,
+    len: usize,
+    send_count: usize,
+    recv_count: usize,
+}
+
+impl<T> SharedState<T> {
+    fn new(cap: Option<usize>) -> Self {
+        let pending_sends = cap.map_or_else(VecDeque::new, VecDeque::with_capacity);
+        Self {
+            pending_recvs: VecDeque::new(),
+            pending_sends,
+            send_siganls: VecDeque::new(),
+            closed: false,
+            cap,
+            len: 0,
+            send_count: 1,
+            recv_count: 1,
+        }
+    }
+
+    fn is_full(&self) -> bool {
+        Some(self.len) == self.cap
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn close(&mut self) {
+        self.closed = true;
+        for s in self.pending_recvs.iter() {
+            s.wake_by_ref();
+        }
+        for s in self.send_siganls.iter() {
+            s.wake_by_ref();
+        }
+    }
+}
+
+fn try_send_core<T>(m: T, guard: &mut MutexGuard<SharedState<T>>) -> Result<(), TrySendError<T>> {
+    if guard.closed {
+        return Err(TrySendError::Disconnected(m));
+    }
+    if let Some(s) = guard.pending_recvs.pop_front() {
+        guard.pending_sends.push_back(m);
+        s.wake();
+        return Ok(());
+    }
+    if guard.is_full() {
+        return Err(TrySendError::Full(m));
+    }
+    guard.pending_sends.push_back(m);
+    guard.len += 1;
+    if let Some(s) = guard.pending_recvs.pop_front() {
+        s.wake();
+    }
+    Ok(())
+}
+
+fn try_recv_core<T, F>(
+    shared_state: &Mutex<SharedState<T>>,
+    get_signal: F,
+) -> Result<T, TryRecvError>
+where
+    F: FnOnce() -> Option<Signal>,
+{
+    let mut guard = shared_state.lock();
+    if !guard.is_empty() {
+        if let Some(m) = guard.pending_sends.pop_front() {
+            guard.len -= 1;
+            if let Some(s) = guard.send_siganls.pop_front() {
+                guard.len += 1;
+                drop(guard);
+                s.wake();
+            }
+            return Ok(m);
+        }
+    }
+    if let Some(m) = guard.pending_sends.pop_front() {
+        if let Some(s) = guard.send_siganls.pop_front() {
+            drop(guard);
+            s.wake();
+        }
+        return Ok(m);
+    }
+    if guard.closed {
+        return Err(TryRecvError::Disconnected);
+    }
+    if let Some(s) = get_signal() {
+        guard.pending_recvs.push_back(s);
+    }
+    Err(TryRecvError::Empty)
+}
+
+/// A future that sends a value into a channel.
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[derive(Debug)]
+pub struct SendFuture<T> {
+    shared_state: Arc<Mutex<SharedState<T>>>,
+    msg: Option<T>,
+}
+
+impl<T> std::marker::Unpin for SendFuture<T> {}
+
+impl<T> Future for SendFuture<T> {
+    type Output = Result<(), SendError<T>>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let m = match self.msg.take() {
+            Some(m) => m,
+            None => {
+                let mut guard = self.shared_state.lock();
+                if guard.closed {
+                    if let Some(m) = guard.pending_sends.pop_front() {
+                        return Poll::Ready(Err(SendError(m)));
+                    }
+                }
+                return Poll::Ready(Ok(()));
+            }
+        };
+        let mut guard = self.shared_state.lock();
+        let m = match try_send_core(m, &mut guard) {
+            Ok(()) => return Poll::Ready(Ok(())),
+            Err(TrySendError::Disconnected(m)) => return Poll::Ready(Err(SendError(m))),
+            Err(TrySendError::Full(m)) => m,
+        };
+        guard.pending_sends.push_back(m);
+        guard.send_siganls.push_back(cx.waker().clone().into());
+        if let Some(s) = guard.pending_recvs.pop_front() {
+            drop(guard);
+            s.wake();
+        }
+        Poll::Pending
+    }
+}
+
+/// A future that allows asynchronously receiving a message.
+/// This future will resolve to a message when a message is available on the channel,
+/// or to an error if the channel is closed.
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[derive(Debug)]
+pub struct RecvFuture<T> {
+    shared_state: Arc<Mutex<SharedState<T>>>,
+}
+
+impl<T> Future for RecvFuture<T> {
+    type Output = Result<T, RecvError>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match try_recv_core(&self.shared_state, || Some(cx.waker().clone().into())) {
+            Ok(m) => Poll::Ready(Ok(m)),
+            Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError::Disconnected)),
+            Err(TryRecvError::Empty) => Poll::Pending,
+        }
+    }
+}
+
+/// The sending half of a channel.
+pub struct Sender<T> {
+    shared_state: Arc<Mutex<SharedState<T>>>,
+}
+
+impl<T> Clone for Sender<T> {
+    /// Clones this sender. A [`Sender`] acts as a handle to the sending end of a channel. The remaining
+    /// contents of the channel will only be cleaned up when all senders and the receiver have been dropped.
+    fn clone(&self) -> Self {
+        let mut guard = self.shared_state.lock();
+        if guard.send_count > 0 {
+            guard.send_count += 1;
+        }
+        Self {
+            shared_state: Arc::clone(&self.shared_state),
+        }
+    }
+}
+
+impl<T> Sender<T> {
+    fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
+        Self { shared_state }
+    }
+
+    /// It returns an error if the channel is bounded and full, or if all receivers have been dropped.
+    /// If the channel is unbounded, the method behaves the same as the [`Sender::send`] method.
+    ///
+    /// This method is useful for avoiding deadlocks. If you are sending a value into a channel and
+    /// you are not sure if the channel is full or if all receivers have been dropped, you can use
+    /// this method instead of the [`Sender::send`] method. If this method returns an error, you can
+    /// take appropriate action, such as retrying the send operation later or buffering the value
+    /// until you can send it successfully.
+    pub fn try_send(&self, m: T) -> Result<(), TrySendError<T>> {
+        try_send_core(m, &mut self.shared_state.lock())
+    }
+
+    /// Asynchronously send a value into the channel, it will return a future that completes when the
+    /// value has been successfully sent, or when an error has occurred.
+    ///
+    /// The method returns an error if all receivers on the channel have been dropped.
+    /// If the channel is bounded and is full, the returned future will yield to the async runtime.
+    pub fn send_async(&self, m: T) -> SendFuture<T> {
+        SendFuture {
+            shared_state: Arc::clone(&self.shared_state),
+            msg: Some(m),
+        }
+    }
+
+    /// Sends a value into the channel. Returns an error if all receivers have been dropped, or if
+    /// the channel is bounded and is full and no receivers are available.
+    pub fn send(&self, m: T) -> Result<(), SendError<T>> {
+        let sync_signal = SyncSignal::new();
+        let mut guard = self.shared_state.lock();
+        let m = match try_send_core(m, &mut guard) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(m)) => return Err(SendError(m)),
+            Err(TrySendError::Full(m)) => m,
+        };
+        guard.pending_sends.push_back(m);
+        guard.send_siganls.push_back(sync_signal.clone().into());
+        if let Some(s) = guard.pending_recvs.pop_front() {
+            drop(guard);
+            s.wake();
+            return Ok(());
+        }
+        drop(guard);
+        sync_signal.wait();
+        let mut guard = self.shared_state.lock();
+        if guard.closed {
+            let len = guard.len;
+            if let Some(m) = guard.pending_sends.remove(len) {
+                guard.send_siganls.remove(len);
+                return Err(SendError(m));
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns `true` if the two senders belong to the same channel, and `false` otherwise.
+    pub fn same_channel(&self, other: &Sender<T>) -> bool {
+        Arc::ptr_eq(&self.shared_state, &other.shared_state)
+    }
+
+    /// Returns the number of messages currently in the channel.
+    ///
+    /// This function is useful for determining how many messages are waiting to be processed
+    /// by consumers, or for implementing backpressure mechanisms.
+    pub fn len(&self) -> usize {
+        self.shared_state.lock().len
+    }
+
+    /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
+    pub fn capacity(&self) -> Option<usize> {
+        self.shared_state.lock().cap
+    }
+
+    /// Returns true if the channel is empty.
+    ///
+    /// Note: Zero-capacity channels are always empty.
+    pub fn is_empty(&self) -> bool {
+        self.shared_state.lock().is_empty()
+    }
+
+    /// Returns true if the channel is full.
+    ///
+    /// Note: Zero-capacity channels are always full.
+    pub fn is_full(&self) -> bool {
+        self.shared_state.lock().is_full()
+    }
+}
+
+impl<T> Drop for Sender<T> {
+    fn drop(&mut self) {
+        let mut guard = self.shared_state.lock();
+        if guard.send_count > 0 {
+            guard.send_count -= 1;
+            if guard.send_count == 0 && guard.recv_count > 0 {
+                guard.close();
+            }
+        }
+    }
+}
+
+/// The receiving end of a channel.
+///
+/// Note: Cloning the receiver *does not* turn this channel into a broadcast channel.
+/// Each message will only be received by a single receiver. This is useful for
+/// implementing work stealing for concurrent programs.
+pub struct Receiver<T> {
+    shared_state: Arc<Mutex<SharedState<T>>>,
+}
+
+impl<T> Clone for Receiver<T> {
+    /// Clone this receiver. [`Receiver`] acts as a handle to the ending a channel. Remaining
+    /// channel contents will only be cleaned up when all senders and the receiver have been
+    /// dropped.
+    ///
+    /// Note: Cloning the receiver *does not* turn this channel into a broadcast channel.
+    /// Each message will only be received by a single receiver. This is useful for
+    /// implementing work stealing for concurrent programs.
+    fn clone(&self) -> Self {
+        let mut guard = self.shared_state.lock();
+        if guard.recv_count > 0 {
+            guard.recv_count += 1;
+        }
+        Self {
+            shared_state: Arc::clone(&self.shared_state),
+        }
+    }
+}
+
+impl<T> Receiver<T> {
+    fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
+        Self { shared_state }
+    }
+
+    /// Attempts to receive a value from the channel associated with this receiver, returning an error if
+    /// the channel is empty or if all senders have been dropped.
+    ///
+    /// This method will block until a value is available on the channel, or until the channel is empty
+    /// or all senders have been dropped.
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+        try_recv_core(&self.shared_state, || None)
+    }
+
+    /// Asynchronously receive a value from the channel, returning an error if all senders have been dropped.
+    /// If the channel is empty, the returned future will yield to the async runtime.
+    ///
+    /// This method returns a future that will be resolved with the value received from the channel,
+    /// or with an error if the channel is closed.
+    pub fn recv_async(&self) -> RecvFuture<T> {
+        RecvFuture {
+            shared_state: Arc::clone(&self.shared_state),
+        }
+    }
+
+    /// Wait for an incoming value from the channel associated with this receiver. If all senders have been
+    /// dropped and there are no more messages in the channel, this method will return an error.
+    pub fn recv(&self) -> Result<T, RecvError> {
+        loop {
+            let sync_signal = SyncSignal::new();
+            match try_recv_core(&self.shared_state, || Some(sync_signal.clone().into())) {
+                Ok(m) => return Ok(m),
+                Err(TryRecvError::Disconnected) => return Err(RecvError::Disconnected),
+                Err(TryRecvError::Empty) => {}
+            };
+            sync_signal.wait();
+        }
+    }
+
+    /// Returns `true` if the two receivers belong to the same channel, and `false` otherwise.
+    pub fn same_channel(&self, other: &Receiver<T>) -> bool {
+        Arc::ptr_eq(&self.shared_state, &other.shared_state)
+    }
+
+    /// Returns the number of messages currently in the channel.
+    ///
+    /// This function is useful for determining how many messages are waiting to be processed
+    /// by consumers, or for implementing backpressure mechanisms.
+    pub fn len(&self) -> usize {
+        self.shared_state.lock().len
+    }
+
+    /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
+    pub fn capacity(&self) -> Option<usize> {
+        self.shared_state.lock().cap
+    }
+
+    /// Returns true if the channel is empty.
+    ///
+    /// Note: Zero-capacity channels are always empty.
+    pub fn is_empty(&self) -> bool {
+        self.shared_state.lock().is_empty()
+    }
+
+    /// Returns true if the channel is full.
+    ///
+    /// Note: Zero-capacity channels are always full.
+    pub fn is_full(&self) -> bool {
+        self.shared_state.lock().is_full()
+    }
+}
+
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+        let mut guard = self.shared_state.lock();
+        if guard.recv_count > 0 {
+            guard.recv_count -= 1;
+            if guard.recv_count == 0 && guard.send_count > 0 {
+                guard.close();
+            }
+        }
+    }
+}
+
+fn channel<T>(cap: Option<usize>) -> (Sender<T>, Receiver<T>) {
+    let shared_state = Arc::new(Mutex::new(SharedState::new(cap)));
+    let sender = Sender::new(Arc::clone(&shared_state));
+    let receiver = Receiver::new(shared_state);
+    (sender, receiver)
+}
+
+/// Create a bounded channel with a limited maximum capacity.
+///
+/// Returns a tuple of a [`Sender`] and a [`Receiver`], which can be used to send and receive messages, respectively.
+/// The channel has a limited capacity, which means that it can only hold a certain number of messages at a time.
+/// If the channel is full, calls to [`Sender::send`] will block until there is space available.
+///
+/// Bounded channels are useful for controlling the flow of data between threads. For example, you can use a bounded
+/// channel to prevent a producer thread from overwhelming a consumer thread.
+///
+/// Unlike an [`unbounded`] channel, if there is no space left for new messages, calls to
+/// [`Sender::send`] will block (unblocking once a receiver has made space). If blocking behaviour
+/// is not desired, [`Sender::try_send`] may be used.
+///
+/// Also 'rendezvous' channels are supported by loole. A bounded queue with a limited maximum capacity of zero will
+/// block senders until a receiver is available to take the value.
+///
+/// Producers can send and consumers can receive messages asynchronously or synchronously.
+///
+/// # Examples
+/// ```
+/// let (tx, rx) = loole::bounded(3);
+///
+/// tx.send(1).unwrap();
+/// tx.send(2).unwrap();
+/// tx.send(3).unwrap();
+///
+/// assert!(tx.try_send(4).is_err());
+///
+/// let mut sum = 0;
+/// sum += rx.recv().unwrap();
+/// sum += rx.recv().unwrap();
+/// sum += rx.recv().unwrap();
+/// 
+/// assert!(rx.try_recv().is_err());
+///
+/// assert_eq!(sum, 1 + 2 + 3);
+/// ```
+pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
+    channel(Some(cap))
+}
+
+/// Creates an unbounded channel, which has unlimited capacity.
+///
+/// This function creates a pair of sender and receiver halves of a channel. Values sent on the sender half will be
+/// received on the receiver half, in the same order in which they were sent. The channel is thread-safe, and both
+/// sender and receiver halves can be sent to or shared between threads as needed. Additionally, both sender and
+/// receiver halves can be cloned.
+///
+/// Producers can send and consumers can receive messages asynchronously or synchronously.
+///
+/// # Examples
+/// ```
+/// let (tx, rx) = loole::unbounded();
+///
+/// tx.send(10).unwrap();
+/// assert_eq!(rx.recv().unwrap(), 10);
+/// ```
+pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
+    channel(None)
+}
