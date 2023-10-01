@@ -10,7 +10,7 @@ Producers can send and consumers can receive messages asynchronously or synchron
 - sync send -> async receive
 
 ## Examples
-```
+```rust
 let (tx, rx) = loole::unbounded();
 tx.send(10).unwrap();
 assert_eq!(rx.recv().unwrap(), 10);
