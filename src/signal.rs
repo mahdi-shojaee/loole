@@ -5,6 +5,7 @@ use std::{
     },
     task::Waker,
     thread::{self, Thread},
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, PartialEq)]
@@ -80,10 +81,35 @@ impl SyncSignal {
     }
 
     #[inline(always)]
+    fn park_timeout(&self, timeout: Duration) -> Result<(), WaitTimeoutError> {
+        let start_time = Instant::now();
+        let mut remaining = timeout;
+        loop {
+            thread::park_timeout(remaining);
+            if self.notified() {
+                return Ok(());
+            }
+            let elapsed = start_time.elapsed();
+            if elapsed >= timeout {
+                return Err(WaitTimeoutError);
+            }
+            remaining = timeout - elapsed;
+        }
+    }
+
+    #[inline(always)]
     pub fn wait(&self) {
         if !self.inner.park_called.swap(true, Ordering::Relaxed) {
             self.park();
         }
+    }
+
+    #[inline(always)]
+    pub fn wait_timeout(&self, timeout: Duration) -> Result<(), WaitTimeoutError> {
+        if !self.inner.park_called.swap(true, Ordering::Relaxed) {
+            return self.park_timeout(timeout);
+        }
+        Ok(())
     }
 
     #[inline(always)]

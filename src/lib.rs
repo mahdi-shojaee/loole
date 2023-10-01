@@ -38,6 +38,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::MutexGuard;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::mutex::Mutex;
@@ -164,6 +165,97 @@ impl From<RecvError> for TryRecvError {
         match err {
             RecvError::Disconnected => Self::Disconnected,
         }
+    }
+}
+
+/// An error that may be returned when attempting to receive a value on a channel with a timeout
+/// and no value is received within the timeout period, or when all senders have been dropped and
+/// there are no more values left in the channel.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum RecvTimeoutError {
+    /// The operation timed out while waiting for a message to be received.
+    Timeout,
+    /// The channel is empty and all senders have been dropped, so no further messages can be received.
+    Disconnected,
+}
+
+impl std::error::Error for RecvTimeoutError {}
+
+impl std::fmt::Display for RecvTimeoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecvTimeoutError::Timeout => f.write_str("timed out waiting on a channel"),
+            RecvTimeoutError::Disconnected => f.write_str("channel is empty and closed"),
+        }
+    }
+}
+
+/// An error that may be emitted when sending a value into a channel on a sender with a timeout.
+///
+/// This error can occur when either:
+///
+/// * The send operation times out before the value is successfully sent.
+/// * All receivers of the channel are dropped before the value is successfully sent.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum SendTimeoutError<T> {
+    /// A timeout occurred when attempting to send the message.
+    Timeout(T),
+    /// The message cannot be sent because all channel receivers were dropped.
+    Disconnected(T),
+}
+
+impl<T> std::error::Error for SendTimeoutError<T> {}
+
+impl<T> SendTimeoutError<T> {
+    /// Consumes the error, returning the message that failed to send.
+    pub fn into_inner(self) -> T {
+        match self {
+            Self::Timeout(msg) | Self::Disconnected(msg) => msg,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for SendTimeoutError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SendTimeoutError(..)")
+    }
+}
+
+impl<T> std::fmt::Display for SendTimeoutError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendTimeoutError::Timeout(..) => f.write_str("timed out sending on a full channel"),
+            SendTimeoutError::Disconnected(..) => f.write_str("sending on a closed channel"),
+        }
+    }
+}
+
+impl<T> From<SendError<T>> for SendTimeoutError<T> {
+    fn from(value: SendError<T>) -> Self {
+        SendTimeoutError::Disconnected(value.0)
+    }
+}
+
+/// An iterator over the msgs received synchronously from a channel.
+pub struct Iter<'a, T> {
+    receiver: &'a Receiver<T>,
+}
+
+/// An non-blocking iterator over the msgs received synchronously from a channel.
+pub struct TryIter<'a, T> {
+    receiver: &'a Receiver<T>,
+}
+
+/// An owned iterator over the msgs received synchronously from a channel.
+pub struct IntoIter<T> {
+    receiver: Receiver<T>,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.receiver.recv().ok()
     }
 }
 
@@ -409,6 +501,46 @@ impl<T> Sender<T> {
         Ok(())
     }
 
+    /// Attempts to send a value into the channel.
+    ///
+    /// If all receivers have been dropped or the timeout has expired, this method will return
+    /// an error. If the channel is bounded and is full, this method will block until space is
+    /// available, the timeout has expired, or all receivers have been dropped.
+    pub fn send_timeout(&self, m: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
+        let sync_signal = SyncSignal::new();
+        let mut guard = self.shared_state.lock();
+        let m = match try_send_core(m, &mut guard) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(m)) => return Err(SendTimeoutError::Disconnected(m)),
+            Err(TrySendError::Full(m)) => m,
+        };
+        guard.pending_sends.push_back(m);
+        guard.send_siganls.push_back(sync_signal.clone().into());
+        if let Some(s) = guard.pending_recvs.pop_front() {
+            drop(guard);
+            s.wake();
+            return Ok(());
+        }
+        drop(guard);
+        let _ = sync_signal.wait_timeout(timeout);
+        let mut guard = self.shared_state.lock();
+        let len = guard.len;
+        if let Some(m) = guard.pending_sends.remove(len) {
+            guard.send_siganls.remove(len);
+            if guard.closed {
+                return Err(SendTimeoutError::Disconnected(m));
+            }
+            return Err(SendTimeoutError::Timeout(m));
+        }
+        Ok(())
+    }
+
+    /// Sends a value into the channel, returning an error if the channel is full and the
+    /// deadline has passed, or if all receivers have been dropped.
+    pub fn send_deadline(&self, m: T, deadline: Instant) -> Result<(), SendTimeoutError<T>> {
+        self.send_timeout(m, deadline.checked_duration_since(Instant::now()).unwrap())
+    }
+
     /// Returns `true` if the two senders belong to the same channel, and `false` otherwise.
     pub fn same_channel(&self, other: &Sender<T>) -> bool {
         Arc::ptr_eq(&self.shared_state, &other.shared_state)
@@ -521,6 +653,49 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Receives a value from the channel associated with this receiver, blocking the current thread
+    /// until a value is available or the timeout expires.
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+        let start_time = Instant::now();
+        let mut timeout_remaining = timeout;
+        loop {
+            let sync_signal = SyncSignal::new();
+            match try_recv_core(&self.shared_state, || Some(sync_signal.clone().into())) {
+                Ok(m) => return Ok(m),
+                Err(TryRecvError::Disconnected) => return Err(RecvTimeoutError::Disconnected),
+                Err(TryRecvError::Empty) => {
+                    let _ = sync_signal.wait_timeout(timeout_remaining);
+                    let elapsed = start_time.elapsed();
+                    if elapsed >= timeout {
+                        return Err(RecvTimeoutError::Timeout);
+                    }
+                    timeout_remaining = timeout - elapsed;
+                }
+            }
+        }
+    }
+
+    /// Receives a value from the channel associated with this receiver, blocking the current thread
+    /// until a value is available or the deadline has passed.
+    pub fn recv_deadline(&self, deadline: Instant) -> Result<T, RecvTimeoutError> {
+        self.recv_timeout(deadline.checked_duration_since(Instant::now()).unwrap())
+    }
+
+    /// Returns a blocking iterator over the values received on the channel. The iterator will finish
+    /// iteration when all senders have been dropped.
+    pub fn iter(&self) -> Iter<T> {
+        Iter { receiver: self }
+    }
+
+    /// An iterator over the values received on the channel that finishes iteration when all senders
+    /// have been dropped or the channel is empty.
+    ///
+    /// This iterator is non-blocking, meaning that it will not wait for the next value to be available
+    /// if there is not one already. If there is no value available, the iterator will return `None`.
+    pub fn try_iter(&self) -> TryIter<T> {
+        TryIter { receiver: self }
+    }
+
     /// Returns `true` if the two receivers belong to the same channel, and `false` otherwise.
     pub fn same_channel(&self, other: &Receiver<T>) -> bool {
         Arc::ptr_eq(&self.shared_state, &other.shared_state)
@@ -566,6 +741,40 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.receiver.recv().ok()
+    }
+}
+
+impl<'a, T> Iterator for TryIter<'a, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.receiver.try_recv().ok()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Receiver<T> {
+    type Item = T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Iter { receiver: self }
+    }
+}
+
+impl<T> IntoIterator for Receiver<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter { receiver: self }
+    }
+}
+
 fn channel<T>(cap: Option<usize>) -> (Sender<T>, Receiver<T>) {
     let shared_state = Arc::new(Mutex::new(SharedState::new(cap)));
     let sender = Sender::new(Arc::clone(&shared_state));
@@ -605,7 +814,7 @@ fn channel<T>(cap: Option<usize>) -> (Sender<T>, Receiver<T>) {
 /// sum += rx.recv().unwrap();
 /// sum += rx.recv().unwrap();
 /// sum += rx.recv().unwrap();
-/// 
+///
 /// assert!(rx.try_recv().is_err());
 ///
 /// assert_eq!(sum, 1 + 2 + 3);

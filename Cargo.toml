@@ -16,4 +16,8 @@ exclude = ["/.*"]
 
 [dev-dependencies]
 tokio = { version = "1.31.0", features = ["full"] }
+async-std = { version = "1.12.0", features = ["attributes", "unstable"] }
 futures = { version = "^0.3", features = ["std"] }
+crossbeam-channel = "0.5.8"
+crossbeam-utils = "0.8.16"
+rand = "0.8.5"
