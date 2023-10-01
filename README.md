@@ -14,8 +14,6 @@ Producers can send and consumers can receive messages asynchronously or synchron
 - async send -> sync receive
 - sync send -> async receive
 
-## Examples
-
 ```rust
 fn main() {
     let (tx, rx) = loole::unbounded();
