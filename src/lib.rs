@@ -23,9 +23,19 @@
 //!
 //! ```
 //! let (tx, rx) = loole::unbounded();
-//!
-//! tx.send(10).unwrap();
-//! assert_eq!(rx.recv().unwrap(), 10);
+//! 
+//! std::thread::spawn(move || {
+//!     for i in (0..10) {
+//!         tx.send(i).unwrap();
+//!     }
+//! });
+//! 
+//! let mut sum = 0;
+//! while let Ok(i) = rx.recv() {
+//!     sum += i;
+//! }
+//! 
+//! assert_eq!(sum, (0..10).sum());
 //! ```
 
 #![forbid(unsafe_code)]
