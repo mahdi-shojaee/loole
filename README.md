@@ -1,3 +1,5 @@
+# Loole
+
 A safe async/sync multi-producer multi-consumer channel.
 
 Producers can send and consumers can receive messages asynchronously or synchronously:
@@ -7,7 +9,7 @@ Producers can send and consumers can receive messages asynchronously or synchron
 - async send -> sync receive
 - sync send -> async receive
 
-# Examples
+## Examples
 ```
 let (tx, rx) = loole::unbounded();
 tx.send(10).unwrap();
@@ -22,15 +24,15 @@ To use Loole, place the following line under the `[dependencies]` section in you
 loole = "x.y"
 ```
 
-# Benchmarks
+## Benchmarks
 
-## MPSC
+### MPSC
 ![MPSC](misc/loole-mpsc.png)
 
-## MPMC
+### MPMC
 ![MPMC](misc/loole-mpmc.png)
 
-## SPSC
+### SPSC
 ![SPSC](misc/loole-spsc.png)
 
 ## License
