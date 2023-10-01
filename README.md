@@ -17,17 +17,30 @@ Producers can send and consumers can receive messages asynchronously or synchron
 ## Examples
 
 ```rust
-let (tx, rx) = loole::unbounded();
-tx.send(10).unwrap();
-assert_eq!(rx.recv().unwrap(), 10);
+fn main() {
+    let (tx, rx) = loole::unbounded();
+
+    std::thread::spawn(move || {
+        for i in (0..10) {
+            tx.send(i).unwrap();
+        }
+    });
+
+    let mut sum = 0;
+    while let Ok(i) = rx.recv() {
+        sum += i;
+    }
+
+    assert_eq!(sum, (0..10).sum());
+}
 ```
 
 ## Usage
 
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
-```
-loole = "x.y"
+```toml
+loole = "0.1.0"
 ```
 
 ## Benchmarks
