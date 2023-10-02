@@ -9,10 +9,10 @@ A safe async/sync multi-producer multi-consumer channel.
 
 Producers can send and consumers can receive messages asynchronously or synchronously:
 
-- async send -> async receive
-- sync send -> sync receive
-- async send -> sync receive
-- sync send -> async receive
+- `sync -> sync`
+- `async -> async`
+- `sync -> async`
+- `async -> sync`
 
 ```rust
 fn main() {
@@ -45,13 +45,19 @@ loole = "0.1.2"
 
 ### MPSC
 
+5000 producers send messages to 1 consumer.
+
 ![MPSC](misc/loole-mpsc.png)
 
 ### MPMC
 
+5000 producers send messages to 2 consumers.
+
 ![MPMC](misc/loole-mpmc.png)
 
 ### SPSC
+
+1 producer send messages to 1 consumer.
 
 ![SPSC](misc/loole-spsc.png)
 
