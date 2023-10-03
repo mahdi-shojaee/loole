@@ -43,6 +43,8 @@ loole = "0.1.2"
 
 ## Benchmarks
 
+Benchmarks measure throughput, which is the number of messages sent and received per second.
+
 ### MPSC
 
 5000 producers send messages to 1 consumer.
