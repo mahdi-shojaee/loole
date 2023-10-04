@@ -97,10 +97,5 @@ async fn async_concurrent_writes_and_reads_buffer_0() {
     ]))
     .await
     .unwrap();
-    for r in recvs.into_iter().map(|r| r.ok()) {
-        assert_eq!(
-            [1, 2, 3].iter().find(|&a| Some(a) == r.as_ref()),
-            r.as_ref()
-        );
-    }
+    assert_eq!(recvs, vec![Ok(1), Ok(2), Ok(3)]);
 }
