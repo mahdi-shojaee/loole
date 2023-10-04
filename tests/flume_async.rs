@@ -77,30 +77,30 @@ fn r#async_send_disconnect() {
 }
 
 // #[cfg(feature = "async")]
-// #[test]
-// fn r#async_recv_drop_recv() {
-//     let (tx, rx) = bounded::<i32>(10);
+#[test]
+fn r#async_recv_drop_recv() {
+    let (tx, rx) = bounded::<i32>(10);
 
-//     let recv_fut = rx.recv_async();
+    let recv_fut = rx.recv_async();
 
-//     async_std::task::block_on(async {
-//         let res =
-//             async_std::future::timeout(std::time::Duration::from_millis(500), rx.recv_async())
-//                 .await;
-//         assert!(res.is_err());
-//     });
+    async_std::task::block_on(async {
+        let res =
+            async_std::future::timeout(std::time::Duration::from_millis(500), rx.recv_async())
+                .await;
+        assert!(res.is_err());
+    });
 
-//     let rx2 = rx.clone();
-//     let t = std::thread::spawn(move || async_std::task::block_on(async { rx2.recv_async().await }));
+    let rx2 = rx.clone();
+    let t = std::thread::spawn(move || async_std::task::block_on(async { rx2.recv_async().await }));
 
-//     std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
-//     tx.send(42).unwrap();
+    tx.send(42).unwrap();
 
-//     drop(recv_fut);
+    drop(recv_fut);
 
-//     assert_eq!(t.join().unwrap(), Ok(42))
-// }
+    assert_eq!(t.join().unwrap(), Ok(42))
+}
 
 // #[cfg(feature = "async")]
 #[async_std::test]

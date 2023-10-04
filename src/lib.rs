@@ -319,7 +319,7 @@ fn try_send_core<T>(m: T, guard: &mut MutexGuard<SharedState<T>>) -> Result<(), 
     if guard.closed {
         return Err(TrySendError::Disconnected(m));
     }
-    if let Some(s) = guard.pending_recvs.pop_front() {
+    if let Some(s) = guard.pending_recvs.pop_back() {
         guard.pending_sends.push_back(m);
         s.wake();
         return Ok(());
@@ -329,7 +329,7 @@ fn try_send_core<T>(m: T, guard: &mut MutexGuard<SharedState<T>>) -> Result<(), 
     }
     guard.pending_sends.push_back(m);
     guard.len += 1;
-    if let Some(s) = guard.pending_recvs.pop_front() {
+    if let Some(s) = guard.pending_recvs.pop_back() {
         s.wake();
     }
     Ok(())
@@ -389,7 +389,7 @@ impl<T> Future for SendFuture<T> {
             None => {
                 let mut guard = self.shared_state.lock();
                 if guard.closed {
-                    if let Some(m) = guard.pending_sends.pop_front() {
+                    if let Some(m) = guard.pending_sends.pop_back() {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
@@ -404,7 +404,7 @@ impl<T> Future for SendFuture<T> {
         };
         guard.pending_sends.push_back(m);
         guard.send_siganls.push_back(cx.waker().clone().into());
-        if let Some(s) = guard.pending_recvs.pop_front() {
+        if let Some(s) = guard.pending_recvs.pop_back() {
             drop(guard);
             s.wake();
         }
@@ -493,7 +493,7 @@ impl<T> Sender<T> {
         };
         guard.pending_sends.push_back(m);
         guard.send_siganls.push_back(sync_signal.clone().into());
-        if let Some(s) = guard.pending_recvs.pop_front() {
+        if let Some(s) = guard.pending_recvs.pop_back() {
             drop(guard);
             s.wake();
             return Ok(());
@@ -526,7 +526,7 @@ impl<T> Sender<T> {
         };
         guard.pending_sends.push_back(m);
         guard.send_siganls.push_back(sync_signal.clone().into());
-        if let Some(s) = guard.pending_recvs.pop_front() {
+        if let Some(s) = guard.pending_recvs.pop_back() {
             drop(guard);
             s.wake();
             return Ok(());
