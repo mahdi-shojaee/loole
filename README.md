@@ -49,17 +49,26 @@ Benchmarks measure throughput, which is the number of messages sent and received
 
 5000 producers send messages to 1 consumer.
 
+Measures: Messages per seconds. (higher is better)
+Messages size: 264 bytes.
+
 ![MPSC](misc/loole-mpsc.png)
 
 ### MPMC
 
 5000 producers send messages to 2 consumers.
 
+Measures: Messages per seconds. (higher is better)
+Messages size: 264 bytes.
+
 ![MPMC](misc/loole-mpmc.png)
 
 ### SPSC
 
 1 producer send messages to 1 consumer.
+
+Measures: Messages per seconds. (higher is better)
+Messages size: 264 bytes.
 
 ![SPSC](misc/loole-spsc.png)
 
