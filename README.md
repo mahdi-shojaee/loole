@@ -19,7 +19,7 @@ fn main() {
     let (tx, rx) = loole::unbounded();
 
     std::thread::spawn(move || {
-        for i in (0..10) {
+        for i in 0..10 {
             tx.send(i).unwrap();
         }
     });
