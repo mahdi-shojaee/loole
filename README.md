@@ -38,7 +38,7 @@ fn main() {
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.1.4"
+loole = "0.1.5"
 ```
 
 ## Benchmarks
@@ -47,9 +47,15 @@ Benchmarks measure throughput, which is the number of messages sent and received
 
 ### Run benchmarks
 
-To run benchmarks on your local machine, run the following command:
+To run benchmarks on your local machine, run the following commands:
 
 ```bash
+# Install dependencies
+cd benchmark/charts/
+npm install
+cd -
+
+# Run the benchmark
 cargo run --release -p benchmark
 ```
 
