@@ -38,42 +38,55 @@ fn main() {
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.1.3"
+loole = "0.1.4"
 ```
 
 ## Benchmarks
 
 Benchmarks measure throughput, which is the number of messages sent and received per second, for messages of 264 bytes each.
 
-### MPSC
+### Run benchmarks
 
-5000 producers send messages to 1 consumer.
+To run benchmarks on your local machine, run the following command:
+
+```bash
+cargo run --release -p benchmark
+```
+
+The above command will generate and update the benchmark images in the README.md file.
+
+### MPSC
 
 Measures: Messages per seconds. (higher is better)
 
 Messages size: 264 bytes.
 
-![MPSC](misc/loole-mpsc.png)
+![MPSC: sync-sync](benchmark/charts/images/mpsc-sync-sync.svg)
+![MPSC: async-async](benchmark/charts/images/mpsc-async-async.svg)
+![MPSC: async-sync](benchmark/charts/images/mpsc-async-sync.svg)
+![MPSC: sync-async](benchmark/charts/images/mpsc-sync-async.svg)
 
 ### MPMC
 
-5000 producers send messages to 2 consumers.
-
 Measures: Messages per seconds. (higher is better)
 
 Messages size: 264 bytes.
 
-![MPMC](misc/loole-mpmc.png)
+![MPMC: sync-sync](benchmark/charts/images/mpmc-sync-sync.svg)
+![MPMC: async-async](benchmark/charts/images/mpmc-async-async.svg)
+![MPMC: async-sync](benchmark/charts/images/mpmc-async-sync.svg)
+![MPMC: sync-async](benchmark/charts/images/mpmc-sync-async.svg)
 
 ### SPSC
 
-1 producer send messages to 1 consumer.
-
 Measures: Messages per seconds. (higher is better)
 
 Messages size: 264 bytes.
 
-![SPSC](misc/loole-spsc.png)
+![SPSC: sync-sync](benchmark/charts/images/spsc-sync-sync.svg)
+![SPSC: async-async](benchmark/charts/images/spsc-async-async.svg)
+![SPSC: async-sync](benchmark/charts/images/spsc-async-sync.svg)
+![SPSC: sync-async](benchmark/charts/images/spsc-sync-async.svg)
 
 ## License
 

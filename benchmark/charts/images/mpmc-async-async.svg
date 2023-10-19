@@ -1,0 +1,231 @@
+<svg width="700" height="220" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" baseProfile="full" viewBox="0 0 700 220">
+<rect width="700" height="220" x="0" y="0" id="0" fill="white"></rect>
+<path d="M89.8 156.5L672 156.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 137.5L672 137.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 118.5L672 118.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 100.5L672 100.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 81.5L672 81.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 62.5L672 62.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 44.5L672 44.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M89.8 156.5L672 156.5" fill="none" stroke="#6E7079" stroke-linecap="round"></path>
+<path d="M90.5 156L90.5 161" fill="none" stroke="#6E7079"></path>
+<path d="M235.5 156L235.5 161" fill="none" stroke="#6E7079"></path>
+<path d="M381.5 156L381.5 161" fill="none" stroke="#6E7079"></path>
+<path d="M526.5 156L526.5 161" fill="none" stroke="#6E7079"></path>
+<path d="M672.5 156L672.5 161" fill="none" stroke="#6E7079"></path>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 156)" fill="#6E7079">0</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 137.3333)" fill="#6E7079">1,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 118.6667)" fill="#6E7079">2,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 100)" fill="#6E7079">3,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 81.3333)" fill="#6E7079">4,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 62.6667)" fill="#6E7079">5,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(81.76 44)" fill="#6E7079">6,000,000</text>
+<text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(162.54 164)" fill="#6E7079">bounded(0)</text>
+<text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(308.1 164)" fill="#6E7079">bounded(1)</text>
+<text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(453.66 164)" fill="#6E7079">bounded(50)</text>
+<text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(599.22 164)" fill="#6E7079">bounded(100)</text>
+<path d="M100.7 156l17.7 0l0 -26.7l-17.7 0Z" fill="#5470c6" class="zr5-cls-0"></path>
+<path d="M246.2 156l17.7 0l0 -26.8l-17.7 0Z" fill="#5470c6" class="zr5-cls-1"></path>
+<path d="M391.8 156l17.7 0l0 -33.9l-17.7 0Z" fill="#5470c6" class="zr5-cls-2"></path>
+<path d="M537.4 156l17.7 0l0 -37.8l-17.7 0Z" fill="#5470c6" class="zr5-cls-3"></path>
+<path d="M121.9 156l17.7 0l0 -1.3l-17.7 0Z" fill="#91cc75" class="zr5-cls-4"></path>
+<path d="M267.4 156l17.7 0l0 -1.4l-17.7 0Z" fill="#91cc75" class="zr5-cls-5"></path>
+<path d="M413 156l17.7 0l0 -1.3l-17.7 0Z" fill="#91cc75" class="zr5-cls-6"></path>
+<path d="M558.6 156l17.7 0l0 -1.3l-17.7 0Z" fill="#91cc75" class="zr5-cls-7"></path>
+<path d="M143.1 156l17.7 0l0 0l-17.7 0Z" fill="#fac858"></path>
+<path d="M288.7 156l17.7 0l0 -12.7l-17.7 0Z" fill="#fac858" class="zr5-cls-8"></path>
+<path d="M434.2 156l17.7 0l0 -108.2l-17.7 0Z" fill="#fac858" class="zr5-cls-9"></path>
+<path d="M579.8 156l17.7 0l0 -101.6l-17.7 0Z" fill="#fac858" class="zr5-cls-10"></path>
+<path d="M164.3 156l17.7 0l0 0l-17.7 0Z" fill="#ee6666"></path>
+<path d="M309.9 156l17.7 0l0 0l-17.7 0Z" fill="#ee6666"></path>
+<path d="M455.4 156l17.7 0l0 0l-17.7 0Z" fill="#ee6666"></path>
+<path d="M601 156l17.7 0l0 0l-17.7 0Z" fill="#ee6666"></path>
+<path d="M185.5 156l17.7 0l0 -40.7l-17.7 0Z" fill="#73c0de" class="zr5-cls-11"></path>
+<path d="M331.1 156l17.7 0l0 -28.3l-17.7 0Z" fill="#73c0de" class="zr5-cls-12"></path>
+<path d="M476.6 156l17.7 0l0 -27.3l-17.7 0Z" fill="#73c0de" class="zr5-cls-13"></path>
+<path d="M622.2 156l17.7 0l0 -30.4l-17.7 0Z" fill="#73c0de" class="zr5-cls-14"></path>
+<path d="M206.7 156l17.7 0l0 0l-17.7 0Z" fill="#3ba272"></path>
+<path d="M352.3 156l17.7 0l0 0l-17.7 0Z" fill="#3ba272"></path>
+<path d="M497.8 156l17.7 0l0 0l-17.7 0Z" fill="#3ba272"></path>
+<path d="M643.4 156l17.7 0l0 0l-17.7 0Z" fill="#3ba272"></path>
+<path d="M-5 -5l321.3 0l0 24l-321.3 0Z" transform="translate(194.36 190)" fill="rgb(0,0,0)" fill-opacity="0" stroke="#ccc" stroke-width="0"></path>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(194.36 190)" fill="#5470c6"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(194.36 190)" fill="#333">loole</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(259.8 190)" fill="#91cc75"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(259.8 190)" fill="#333">flume</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(329.2 190)" fill="#fac858"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(329.2 190)" fill="#333">async-channel</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(446.84 190)" fill="#73c0de"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(446.84 190)" fill="#333">kanal</text>
+<path d="M-147.5 -4.5l295 0l0 23l-295 0Z" transform="translate(350 16)" fill="#ddd8" stroke="#ccc"></path>
+<text dominant-baseline="central" text-anchor="middle" style="font-size:14px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="7" transform="translate(350 16)" fill="#464646">5000 async senders / 10 async receivers</text>
+<style ><![CDATA[
+.zr5-cls-0 {
+animation:zr5-ani-0 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-1 {
+animation:zr5-ani-1 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-2 {
+animation:zr5-ani-2 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-3 {
+animation:zr5-ani-3 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-4 {
+animation:zr5-ani-4 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-5 {
+animation:zr5-ani-5 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-6 {
+animation:zr5-ani-6 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-7 {
+animation:zr5-ani-7 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-8 {
+animation:zr5-ani-8 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-9 {
+animation:zr5-ani-9 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-10 {
+animation:zr5-ani-10 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-11 {
+animation:zr5-ani-11 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-12 {
+animation:zr5-ani-12 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-13 {
+animation:zr5-ani-13 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+.zr5-cls-14 {
+animation:zr5-ani-14 1s cubic-bezier(0.65,0,0.35,1) both;
+}
+@keyframes zr5-ani-0 {
+0% {
+d:path("M100.7 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M100.7 156l17.7 0l0 -26.7l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-1 {
+0% {
+d:path("M246.2 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M246.2 156l17.7 0l0 -26.8l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-2 {
+0% {
+d:path("M391.8 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M391.8 156l17.7 0l0 -33.9l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-3 {
+0% {
+d:path("M537.4 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M537.4 156l17.7 0l0 -37.8l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-4 {
+0% {
+d:path("M121.9 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M121.9 156l17.7 0l0 -1.3l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-5 {
+0% {
+d:path("M267.4 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M267.4 156l17.7 0l0 -1.4l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-6 {
+0% {
+d:path("M413 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M413 156l17.7 0l0 -1.3l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-7 {
+0% {
+d:path("M558.6 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M558.6 156l17.7 0l0 -1.3l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-8 {
+0% {
+d:path("M288.7 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M288.7 156l17.7 0l0 -12.7l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-9 {
+0% {
+d:path("M434.2 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M434.2 156l17.7 0l0 -108.2l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-10 {
+0% {
+d:path("M579.8 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M579.8 156l17.7 0l0 -101.6l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-11 {
+0% {
+d:path("M185.5 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M185.5 156l17.7 0l0 -40.7l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-12 {
+0% {
+d:path("M331.1 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M331.1 156l17.7 0l0 -28.3l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-13 {
+0% {
+d:path("M476.6 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M476.6 156l17.7 0l0 -27.3l-17.7 0Z");
+}
+}
+@keyframes zr5-ani-14 {
+0% {
+d:path("M622.2 156l17.7 0l0 0l-17.7 0Z");
+}
+100% {
+d:path("M622.2 156l17.7 0l0 -30.4l-17.7 0Z");
+}
+}
+]]>
+
+</style>
+</svg>

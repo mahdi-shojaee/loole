@@ -1,0 +1,12 @@
+{
+  "name": "charts",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "update": "node --no-warnings main.js"
+  },
+  "dependencies": {
+    "echarts": "^5.4.3",
+    "jsdom": "^22.1.0"
+  }
+}

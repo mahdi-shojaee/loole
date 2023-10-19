@@ -1,0 +1,15 @@
+[package]
+name = "benchmark"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+loole = { path = ".." }
+async-channel = "1.9.0"
+flume = "0.10.14"
+kanal = { version = "0.1.0-pre8", features = ["std-mutex"] }
+crossbeam-channel = "0.5.8"
+tokio = { version = "1.31.0", features = ["full"] }
+num-format = "0.4.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.107"

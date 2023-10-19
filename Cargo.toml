@@ -1,6 +1,9 @@
+[workspace]
+members = ["benchmark"]
+
 [package]
 name = "loole"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["Mahdi Shojaee <msh6180339@gmail.com>"]
 description = "A safe async/sync multi-producer, multi-consumer channel"
