@@ -40,8 +40,21 @@ fn main() {
     file.write_all(json_str.as_ref()).unwrap();
 
     match std::process::Command::new("npm")
+        .args(["install"])
+        .current_dir(&charts_dir)
+        .status()
+    {
+        Ok(_) => {}
+        Err(err) => {
+            eprintln!("{}", err);
+            eprintln!("Maybe node.js is not installed on your system. You can install it from https://nodejs.org/en.");
+            std::process::exit(1);
+        }
+    }
+
+    match std::process::Command::new("npm")
         .args(["run", "update"])
-        .current_dir(charts_dir)
+        .current_dir(&charts_dir)
         .status()
     {
         Ok(_) => println!("Charts updated successfully"),
