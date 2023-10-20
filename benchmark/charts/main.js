@@ -27,11 +27,11 @@ function renderChart(data, chanType, benchType) {
   const chart = echarts.init(null, null, {
     renderer: "svg",
     ssr: true,
-    animation: false,
     width: 700,
     height: 220,
   });
   const option = {
+    animation: false,
     title: {
       text: data[chanType][benchType].title,
       textStyle: {
