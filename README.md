@@ -41,13 +41,13 @@ To use Loole, place the following line under the `[dependencies]` section in you
 loole = "0.1.7"
 ```
 
-## Benchmarks
+## Run Benchmarks
 
 Benchmarks measure throughput, which is the number of messages sent and received per second, for messages of 264 bytes each.
 
-### Run benchmarks
-
 To run benchmarks on your local machine, run the following command:
+
+_Prior to executing this command, ensure Node.js is installed._
 
 ```bash
 cargo run --release -p benchmark
@@ -55,9 +55,13 @@ cargo run --release -p benchmark
 
 The above command will generate and update the benchmark images in the README.md file.
 
+## Benchmark Results
+
+Benchmark results on Intel Core i7-13700K (16/24-core/thread) processor:
+
 ### MPSC
 
-Measures: Messages per seconds. (higher is better)
+Measures: Messages per second. (higher is better)
 
 Messages size: 264 bytes.
 
@@ -68,7 +72,7 @@ Messages size: 264 bytes.
 
 ### MPMC
 
-Measures: Messages per seconds. (higher is better)
+Measures: Messages per second. (higher is better)
 
 Messages size: 264 bytes.
 
@@ -79,7 +83,7 @@ Messages size: 264 bytes.
 
 ### SPSC
 
-Measures: Messages per seconds. (higher is better)
+Measures: Messages per second. (higher is better)
 
 Messages size: 264 bytes.
 
