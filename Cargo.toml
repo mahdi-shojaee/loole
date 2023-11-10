@@ -24,3 +24,8 @@ futures = { version = "^0.3", features = ["std"] }
 crossbeam-channel = "0.5.8"
 crossbeam-utils = "0.8.16"
 rand = "0.8.5"
+criterion = { version = "0.4", features = ["html_reports"] }
+
+[[bench]]
+name = "send_receive_async"
+harness = false
