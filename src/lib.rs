@@ -23,18 +23,18 @@
 //!
 //! ```
 //! let (tx, rx) = loole::unbounded();
-//! 
+//!
 //! std::thread::spawn(move || {
-//!     for i in (0..10) {
+//!     for i in 0..10 {
 //!         tx.send(i).unwrap();
 //!     }
 //! });
-//! 
+//!
 //! let mut sum = 0;
 //! while let Ok(i) = rx.recv() {
 //!     sum += i;
 //! }
-//! 
+//!
 //! assert_eq!(sum, (0..10).sum());
 //! ```
 
@@ -42,14 +42,17 @@
 #![warn(missing_docs)]
 
 mod mutex;
+mod queue;
 mod signal;
 
 use std::fmt::Debug;
 use std::future::Future;
+use std::sync::Arc;
 use std::sync::MutexGuard;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use std::{collections::VecDeque, sync::Arc};
+
+use queue::Queue;
 
 use crate::mutex::Mutex;
 use crate::signal::{Signal, SyncSignal};
@@ -271,28 +274,30 @@ impl<T> Iterator for IntoIter<T> {
 
 #[derive(Debug)]
 struct SharedState<T> {
-    pending_recvs: VecDeque<Signal>,
-    send_siganls: VecDeque<Signal>,
-    pending_sends: VecDeque<T>,
+    recv_signals: Queue<Signal>,
+    send_siganls: Queue<Signal>,
+    pending_sends: Queue<T>,
     closed: bool,
     cap: Option<usize>,
     len: usize,
     send_count: usize,
     recv_count: usize,
+    next_id: usize,
 }
 
 impl<T> SharedState<T> {
     fn new(cap: Option<usize>) -> Self {
-        let pending_sends = cap.map_or_else(VecDeque::new, VecDeque::with_capacity);
+        let pending_sends = cap.map_or_else(Queue::new, Queue::with_capacity);
         Self {
-            pending_recvs: VecDeque::new(),
+            recv_signals: Queue::new(),
+            send_siganls: Queue::new(),
             pending_sends,
-            send_siganls: VecDeque::new(),
             closed: false,
             cap,
             len: 0,
             send_count: 1,
             recv_count: 1,
+            next_id: 1,
         }
     }
 
@@ -304,32 +309,42 @@ impl<T> SharedState<T> {
         self.len == 0
     }
 
+    fn get_next_id(&mut self) -> usize {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        id
+    }
+
     fn close(&mut self) {
         self.closed = true;
-        for s in self.pending_recvs.iter() {
-            s.wake_by_ref();
+        while let Some((_, s)) = self.recv_signals.dequeue() {
+            s.wake();
         }
-        for s in self.send_siganls.iter() {
-            s.wake_by_ref();
+        while let Some((_, s)) = self.send_siganls.dequeue() {
+            s.wake();
         }
     }
 }
 
-fn try_send_core<T>(m: T, guard: &mut MutexGuard<SharedState<T>>) -> Result<(), TrySendError<T>> {
+fn try_send_core<T>(
+    id: usize,
+    m: T,
+    guard: &mut MutexGuard<SharedState<T>>,
+) -> Result<(), TrySendError<T>> {
     if guard.closed {
         return Err(TrySendError::Disconnected(m));
     }
-    if let Some(s) = guard.pending_recvs.pop_back() {
-        guard.pending_sends.push_back(m);
+    if let Some((_, s)) = guard.recv_signals.dequeue() {
+        guard.pending_sends.enqueue(id, m);
         s.wake();
         return Ok(());
     }
     if guard.is_full() {
         return Err(TrySendError::Full(m));
     }
-    guard.pending_sends.push_back(m);
+    guard.pending_sends.enqueue(id, m);
     guard.len += 1;
-    if let Some(s) = guard.pending_recvs.pop_back() {
+    if let Some((_, s)) = guard.recv_signals.dequeue() {
         s.wake();
     }
     Ok(())
@@ -340,13 +355,13 @@ fn try_recv_core<T, F>(
     get_signal: F,
 ) -> Result<T, TryRecvError>
 where
-    F: FnOnce() -> Option<Signal>,
+    F: FnOnce() -> Option<(usize, Signal)>,
 {
     let mut guard = shared_state.lock();
     if !guard.is_empty() {
-        if let Some(m) = guard.pending_sends.pop_front() {
+        if let Some((_, m)) = guard.pending_sends.dequeue() {
             guard.len -= 1;
-            if let Some(s) = guard.send_siganls.pop_front() {
+            if let Some((_, s)) = guard.send_siganls.dequeue() {
                 guard.len += 1;
                 drop(guard);
                 s.wake();
@@ -354,8 +369,8 @@ where
             return Ok(m);
         }
     }
-    if let Some(m) = guard.pending_sends.pop_front() {
-        if let Some(s) = guard.send_siganls.pop_front() {
+    if let Some((_, m)) = guard.pending_sends.dequeue() {
+        if let Some((_, s)) = guard.send_siganls.dequeue() {
             drop(guard);
             s.wake();
         }
@@ -365,7 +380,9 @@ where
         return Err(TryRecvError::Disconnected);
     }
     if let Some(s) = get_signal() {
-        guard.pending_recvs.push_back(s);
+        if s.0 == 0 || !guard.recv_signals.contains(s.0) {
+            guard.recv_signals.enqueue(s.0, s.1);
+        }
     }
     Err(TryRecvError::Empty)
 }
@@ -389,7 +406,7 @@ impl<T> Future for SendFuture<T> {
             None => {
                 let mut guard = self.shared_state.lock();
                 if guard.closed {
-                    if let Some(m) = guard.pending_sends.pop_back() {
+                    if let Some((_, m)) = guard.pending_sends.dequeue() {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
@@ -397,14 +414,14 @@ impl<T> Future for SendFuture<T> {
             }
         };
         let mut guard = self.shared_state.lock();
-        let m = match try_send_core(m, &mut guard) {
+        let m = match try_send_core(0, m, &mut guard) {
             Ok(()) => return Poll::Ready(Ok(())),
             Err(TrySendError::Disconnected(m)) => return Poll::Ready(Err(SendError(m))),
             Err(TrySendError::Full(m)) => m,
         };
-        guard.pending_sends.push_back(m);
-        guard.send_siganls.push_back(cx.waker().clone().into());
-        if let Some(s) = guard.pending_recvs.pop_back() {
+        guard.pending_sends.enqueue(0, m);
+        guard.send_siganls.enqueue(0, cx.waker().clone().into());
+        if let Some((_, s)) = guard.recv_signals.dequeue() {
             drop(guard);
             s.wake();
         }
@@ -418,6 +435,7 @@ impl<T> Future for SendFuture<T> {
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
 pub struct RecvFuture<T> {
+    id: usize,
     shared_state: Arc<Mutex<SharedState<T>>>,
 }
 
@@ -425,11 +443,20 @@ impl<T> Future for RecvFuture<T> {
     type Output = Result<T, RecvError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match try_recv_core(&self.shared_state, || Some(cx.waker().clone().into())) {
+        match try_recv_core(&self.shared_state, || {
+            Some((self.id, cx.waker().clone().into()))
+        }) {
             Ok(m) => Poll::Ready(Ok(m)),
             Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError::Disconnected)),
             Err(TryRecvError::Empty) => Poll::Pending,
         }
+    }
+}
+
+impl<T> Drop for RecvFuture<T> {
+    fn drop(&mut self) {
+        let mut guard = self.shared_state.lock();
+        guard.recv_signals.remove_by_id(self.id);
     }
 }
 
@@ -466,7 +493,7 @@ impl<T> Sender<T> {
     /// take appropriate action, such as retrying the send operation later or buffering the value
     /// until you can send it successfully.
     pub fn try_send(&self, m: T) -> Result<(), TrySendError<T>> {
-        try_send_core(m, &mut self.shared_state.lock())
+        try_send_core(0, m, &mut self.shared_state.lock())
     }
 
     /// Asynchronously send a value into the channel, it will return a future that completes when the
@@ -486,14 +513,14 @@ impl<T> Sender<T> {
     pub fn send(&self, m: T) -> Result<(), SendError<T>> {
         let sync_signal = SyncSignal::new();
         let mut guard = self.shared_state.lock();
-        let m = match try_send_core(m, &mut guard) {
+        let m = match try_send_core(0, m, &mut guard) {
             Ok(()) => return Ok(()),
             Err(TrySendError::Disconnected(m)) => return Err(SendError(m)),
             Err(TrySendError::Full(m)) => m,
         };
-        guard.pending_sends.push_back(m);
-        guard.send_siganls.push_back(sync_signal.clone().into());
-        if let Some(s) = guard.pending_recvs.pop_back() {
+        guard.pending_sends.enqueue(0, m);
+        guard.send_siganls.enqueue(0, sync_signal.clone().into());
+        if let Some((_, s)) = guard.recv_signals.dequeue() {
             drop(guard);
             s.wake();
             return Ok(());
@@ -503,8 +530,8 @@ impl<T> Sender<T> {
         let mut guard = self.shared_state.lock();
         if guard.closed {
             let len = guard.len;
-            if let Some(m) = guard.pending_sends.remove(len) {
-                guard.send_siganls.remove(len);
+            if let Some((_, m)) = guard.pending_sends.remove_by_index(len) {
+                guard.send_siganls.remove_by_index(len);
                 return Err(SendError(m));
             }
         }
@@ -519,14 +546,14 @@ impl<T> Sender<T> {
     pub fn send_timeout(&self, m: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
         let sync_signal = SyncSignal::new();
         let mut guard = self.shared_state.lock();
-        let m = match try_send_core(m, &mut guard) {
+        let m = match try_send_core(0, m, &mut guard) {
             Ok(()) => return Ok(()),
             Err(TrySendError::Disconnected(m)) => return Err(SendTimeoutError::Disconnected(m)),
             Err(TrySendError::Full(m)) => m,
         };
-        guard.pending_sends.push_back(m);
-        guard.send_siganls.push_back(sync_signal.clone().into());
-        if let Some(s) = guard.pending_recvs.pop_back() {
+        guard.pending_sends.enqueue(0, m);
+        guard.send_siganls.enqueue(0, sync_signal.clone().into());
+        if let Some((_, s)) = guard.recv_signals.dequeue() {
             drop(guard);
             s.wake();
             return Ok(());
@@ -535,8 +562,8 @@ impl<T> Sender<T> {
         let _ = sync_signal.wait_timeout(timeout);
         let mut guard = self.shared_state.lock();
         let len = guard.len;
-        if let Some(m) = guard.pending_sends.remove(len) {
-            guard.send_siganls.remove(len);
+        if let Some((_, m)) = guard.pending_sends.remove_by_index(len) {
+            guard.send_siganls.remove_by_index(len);
             if guard.closed {
                 return Err(SendTimeoutError::Disconnected(m));
             }
@@ -645,6 +672,7 @@ impl<T> Receiver<T> {
     /// or with an error if the channel is closed.
     pub fn recv_async(&self) -> RecvFuture<T> {
         RecvFuture {
+            id: self.shared_state.lock().get_next_id(),
             shared_state: Arc::clone(&self.shared_state),
         }
     }
@@ -654,7 +682,7 @@ impl<T> Receiver<T> {
     pub fn recv(&self) -> Result<T, RecvError> {
         loop {
             let sync_signal = SyncSignal::new();
-            match try_recv_core(&self.shared_state, || Some(sync_signal.clone().into())) {
+            match try_recv_core(&self.shared_state, || Some((0, sync_signal.clone().into()))) {
                 Ok(m) => return Ok(m),
                 Err(TryRecvError::Disconnected) => return Err(RecvError::Disconnected),
                 Err(TryRecvError::Empty) => {}
@@ -670,7 +698,7 @@ impl<T> Receiver<T> {
         let mut timeout_remaining = timeout;
         loop {
             let sync_signal = SyncSignal::new();
-            match try_recv_core(&self.shared_state, || Some(sync_signal.clone().into())) {
+            match try_recv_core(&self.shared_state, || Some((0, sync_signal.clone().into()))) {
                 Ok(m) => return Ok(m),
                 Err(TryRecvError::Disconnected) => return Err(RecvTimeoutError::Disconnected),
                 Err(TryRecvError::Empty) => {
