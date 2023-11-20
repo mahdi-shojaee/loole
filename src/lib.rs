@@ -45,7 +45,6 @@ mod mutex;
 mod queue;
 mod signal;
 
-use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::MutexGuard;
@@ -465,6 +464,12 @@ pub struct Sender<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
 }
 
+impl<T> std::fmt::Debug for Sender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sender").finish()
+    }
+}
+
 impl<T> Clone for Sender<T> {
     /// Clones this sender. A [`Sender`] acts as a handle to the sending end of a channel. The remaining
     /// contents of the channel will only be cleaned up when all senders and the receiver have been dropped.
@@ -630,6 +635,12 @@ impl<T> Drop for Sender<T> {
 /// implementing work stealing for concurrent programs.
 pub struct Receiver<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
+}
+
+impl<T> std::fmt::Debug for Receiver<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Receiver").finish()
+    }
 }
 
 impl<T> Clone for Receiver<T> {
