@@ -368,6 +368,7 @@ where
             return Ok(m);
         }
     }
+    // For rendezvous (zero buffer) channels.
     if let Some((_, m)) = guard.pending_sends.dequeue() {
         if let Some((_, s)) = guard.send_siganls.dequeue() {
             drop(guard);
@@ -455,7 +456,7 @@ impl<T> Future for RecvFuture<T> {
 impl<T> Drop for RecvFuture<T> {
     fn drop(&mut self) {
         let mut guard = self.shared_state.lock();
-        guard.recv_signals.remove_by_id(self.id);
+        guard.recv_signals.remove(self.id);
     }
 }
 
@@ -523,8 +524,9 @@ impl<T> Sender<T> {
             Err(TrySendError::Disconnected(m)) => return Err(SendError(m)),
             Err(TrySendError::Full(m)) => m,
         };
-        guard.pending_sends.enqueue(0, m);
-        guard.send_siganls.enqueue(0, sync_signal.clone().into());
+        let id = guard.get_next_id();
+        guard.pending_sends.enqueue(id, m);
+        guard.send_siganls.enqueue(id, sync_signal.clone().into());
         if let Some((_, s)) = guard.recv_signals.dequeue() {
             drop(guard);
             s.wake();
@@ -534,9 +536,8 @@ impl<T> Sender<T> {
         sync_signal.wait();
         let mut guard = self.shared_state.lock();
         if guard.closed {
-            let len = guard.len;
-            if let Some((_, m)) = guard.pending_sends.remove_by_index(len) {
-                guard.send_siganls.remove_by_index(len);
+            if let Some((_, m)) = guard.pending_sends.remove(id) {
+                guard.send_siganls.remove(id);
                 return Err(SendError(m));
             }
         }
@@ -556,8 +557,9 @@ impl<T> Sender<T> {
             Err(TrySendError::Disconnected(m)) => return Err(SendTimeoutError::Disconnected(m)),
             Err(TrySendError::Full(m)) => m,
         };
-        guard.pending_sends.enqueue(0, m);
-        guard.send_siganls.enqueue(0, sync_signal.clone().into());
+        let id = guard.get_next_id();
+        guard.pending_sends.enqueue(id, m);
+        guard.send_siganls.enqueue(id, sync_signal.clone().into());
         if let Some((_, s)) = guard.recv_signals.dequeue() {
             drop(guard);
             s.wake();
@@ -566,9 +568,8 @@ impl<T> Sender<T> {
         drop(guard);
         let _ = sync_signal.wait_timeout(timeout);
         let mut guard = self.shared_state.lock();
-        let len = guard.len;
-        if let Some((_, m)) = guard.pending_sends.remove_by_index(len) {
-            guard.send_siganls.remove_by_index(len);
+        if let Some((_, m)) = guard.pending_sends.remove(id) {
+            guard.send_siganls.remove(id);
             if guard.closed {
                 return Err(SendTimeoutError::Disconnected(m));
             }

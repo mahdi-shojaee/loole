@@ -30,12 +30,8 @@ impl<T> Queue<T> {
         self.inner.iter().find(|(i, _)| *i == id).is_some()
     }
 
-    pub fn remove_by_id(&mut self, id: usize) -> Option<(usize, T)> {
+    pub fn remove(&mut self, id: usize) -> Option<(usize, T)> {
         self.inner.remove(self.index_by_id(id)?)
-    }
-
-    pub fn remove_by_index(&mut self, index: usize) -> Option<(usize, T)> {
-        self.inner.remove(index)
     }
 
     fn index_by_id(&self, id: usize) -> Option<usize> {
