@@ -26,14 +26,6 @@ impl<T> Queue<T> {
         self.inner.pop_front()
     }
 
-    pub fn index_by_id(&self, id: usize) -> Option<usize> {
-        self.inner
-            .iter()
-            .enumerate()
-            .find(|(_, m)| m.0 == id)
-            .map(|(index, _)| index)
-    }
-
     pub fn contains(&self, id: usize) -> bool {
         self.inner.iter().find(|(i, _)| *i == id).is_some()
     }
@@ -44,5 +36,13 @@ impl<T> Queue<T> {
 
     pub fn remove_by_index(&mut self, index: usize) -> Option<(usize, T)> {
         self.inner.remove(index)
+    }
+
+    fn index_by_id(&self, id: usize) -> Option<usize> {
+        self.inner
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.0 == id)
+            .map(|(index, _)| index)
     }
 }
