@@ -3,15 +3,15 @@ members = ["benchmark"]
 
 [package]
 name = "loole"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
 authors = ["Mahdi Shojaee <msh6180339@gmail.com>"]
 description = "A safe async/sync multi-producer, multi-consumer channel"
 repository = "https://github.com/mahdi-shojaee/loole"
 documentation = "https://docs.rs/loole"
-keywords = ["mpsc", "mpmc", "channel", "fifo"]
+keywords = ["async", "thread", "mpsc", "mpmc", "channel", "fifo"]
 categories = ["concurrency", "data-structures"]
-license = "Apache-2.0/MIT"
+license = "MIT/Apache-2.0"
 readme = "README.md"
 exclude = ["/.*"]
 
