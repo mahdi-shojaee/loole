@@ -27,7 +27,7 @@ impl<T> Queue<T> {
     }
 
     pub fn contains(&self, id: usize) -> bool {
-        self.inner.iter().find(|(i, _)| *i == id).is_some()
+        self.inner.iter().any(|(i, _)| *i == id)
     }
 
     pub fn remove(&mut self, id: usize) -> Option<(usize, T)> {
