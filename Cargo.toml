@@ -3,7 +3,7 @@ members = ["benchmark"]
 
 [package]
 name = "loole"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2021"
 authors = ["Mahdi Shojaee <msh6180339@gmail.com>"]
 description = "A safe async/sync multi-producer, multi-consumer channel"
@@ -16,10 +16,9 @@ readme = "README.md"
 exclude = ["/.*"]
 
 [dev-dependencies]
-tokio = { version = "1.31.0", features = ["full"] }
+tokio = { version = "1.34.0", features = ["full"] }
 async-std = { version = "1.12.0", features = ["attributes", "unstable"] }
 futures = { version = "^0.3", features = ["std"] }
-crossbeam-channel = "0.5.8"
 crossbeam-utils = "0.8.16"
 rand = "0.8.5"
 criterion = { version = "0.4", features = ["html_reports"] }
