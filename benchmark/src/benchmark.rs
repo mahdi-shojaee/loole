@@ -8,9 +8,7 @@ use crate::{
 
 pub const MESSAGES_NO: usize = 1_000_000;
 
-// type MsgType = message_type::StackType<4>;
 type MsgType = message_type::StackType<256>;
-// type MsgType = message_type::StackType<4096>;
 
 pub const BUFFER_SIZE_LIST: [Option<usize>; 4] = [Some(0), Some(1), Some(50), Some(100)];
 
@@ -31,7 +29,7 @@ impl Display for CrateName {
             CrateName::AsyncChannel => write!(f, "async-channel"),
             CrateName::Tokio => write!(f, "tokio"),
             CrateName::CrossbeamChannel => write!(f, "crossbeam-channel"),
-            CrateName::Kanal => write!(f, "kanal"),
+            CrateName::Kanal => write!(f, "kanal (std-mutex)"),
         }
     }
 }

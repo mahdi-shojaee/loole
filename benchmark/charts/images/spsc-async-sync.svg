@@ -22,41 +22,41 @@
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(312.3 164)" fill="#6E7079">bounded(1)</text>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(456.18 164)" fill="#6E7079">bounded(50)</text>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(600.06 164)" fill="#6E7079">bounded(100)</text>
-<path d="M107.3 156l17.5 0l0 -5.8l-17.5 0Z" fill="#5470c6"></path>
-<path d="M251.2 156l17.5 0l0 -8.5l-17.5 0Z" fill="#5470c6"></path>
-<path d="M395 156l17.5 0l0 -42l-17.5 0Z" fill="#5470c6"></path>
-<path d="M538.9 156l17.5 0l0 -51.8l-17.5 0Z" fill="#5470c6"></path>
-<path d="M128.2 156l17.5 0l0 -5.6l-17.5 0Z" fill="#91cc75"></path>
-<path d="M272.1 156l17.5 0l0 -8l-17.5 0Z" fill="#91cc75"></path>
-<path d="M416 156l17.5 0l0 -65.2l-17.5 0Z" fill="#91cc75"></path>
-<path d="M559.9 156l17.5 0l0 -52.9l-17.5 0Z" fill="#91cc75"></path>
+<path d="M107.3 156l17.5 0l0 -5.6l-17.5 0Z" fill="#5470c6"></path>
+<path d="M251.2 156l17.5 0l0 -8.8l-17.5 0Z" fill="#5470c6"></path>
+<path d="M395 156l17.5 0l0 -52l-17.5 0Z" fill="#5470c6"></path>
+<path d="M538.9 156l17.5 0l0 -49.1l-17.5 0Z" fill="#5470c6"></path>
+<path d="M128.2 156l17.5 0l0 -5.5l-17.5 0Z" fill="#91cc75"></path>
+<path d="M272.1 156l17.5 0l0 -8.1l-17.5 0Z" fill="#91cc75"></path>
+<path d="M416 156l17.5 0l0 -61.3l-17.5 0Z" fill="#91cc75"></path>
+<path d="M559.9 156l17.5 0l0 -54.9l-17.5 0Z" fill="#91cc75"></path>
 <path d="M149.2 156l17.5 0l0 0l-17.5 0Z" fill="#fac858"></path>
 <path d="M293.1 156l17.5 0l0 -2.9l-17.5 0Z" fill="#fac858"></path>
-<path d="M437 156l17.5 0l0 -61.4l-17.5 0Z" fill="#fac858"></path>
-<path d="M580.8 156l17.5 0l0 -76.5l-17.5 0Z" fill="#fac858"></path>
+<path d="M437 156l17.5 0l0 -60.4l-17.5 0Z" fill="#fac858"></path>
+<path d="M580.8 156l17.5 0l0 -62.5l-17.5 0Z" fill="#fac858"></path>
 <path d="M170.2 156l17.5 0l0 0l-17.5 0Z" fill="#ee6666"></path>
 <path d="M314 156l17.5 0l0 -2.8l-17.5 0Z" fill="#ee6666"></path>
-<path d="M457.9 156l17.5 0l0 -75.5l-17.5 0Z" fill="#ee6666"></path>
-<path d="M601.8 156l17.5 0l0 -69.5l-17.5 0Z" fill="#ee6666"></path>
-<path d="M191.1 156l17.5 0l0 -14.8l-17.5 0Z" fill="#73c0de"></path>
-<path d="M335 156l17.5 0l0 -22.4l-17.5 0Z" fill="#73c0de"></path>
-<path d="M478.9 156l17.5 0l0 -91l-17.5 0Z" fill="#73c0de"></path>
-<path d="M622.8 156l17.5 0l0 -97.4l-17.5 0Z" fill="#73c0de"></path>
+<path d="M457.9 156l17.5 0l0 -72.4l-17.5 0Z" fill="#ee6666"></path>
+<path d="M601.8 156l17.5 0l0 -72.1l-17.5 0Z" fill="#ee6666"></path>
+<path d="M191.1 156l17.5 0l0 -14.6l-17.5 0Z" fill="#73c0de"></path>
+<path d="M335 156l17.5 0l0 -23.1l-17.5 0Z" fill="#73c0de"></path>
+<path d="M478.9 156l17.5 0l0 -98.7l-17.5 0Z" fill="#73c0de"></path>
+<path d="M622.8 156l17.5 0l0 -94.3l-17.5 0Z" fill="#73c0de"></path>
 <path d="M212.1 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>
 <path d="M356 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>
 <path d="M499.9 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>
 <path d="M643.7 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>
-<path d="M-5 -5l386.7 0l0 24l-386.7 0Z" transform="translate(161.64 190)" fill="rgb(0,0,0)" fill-opacity="0" stroke="#ccc" stroke-width="0"></path>
-<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(161.64 190)" fill="#5470c6"></path>
-<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(161.64 190)" fill="#333">loole</text>
-<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(227.08 190)" fill="#91cc75"></path>
-<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(227.08 190)" fill="#333">flume</text>
-<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(296.48 190)" fill="#fac858"></path>
-<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(296.48 190)" fill="#333">async-channel</text>
-<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(414.12 190)" fill="#ee6666"></path>
-<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(414.12 190)" fill="#333">tokio</text>
-<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(479.56 190)" fill="#73c0de"></path>
-<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(479.56 190)" fill="#333">kanal</text>
+<path d="M-5 -5l450.8 0l0 24l-450.8 0Z" transform="translate(129.6 190)" fill="rgb(0,0,0)" fill-opacity="0" stroke="#ccc" stroke-width="0"></path>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(129.6 190)" fill="#5470c6"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(129.6 190)" fill="#333">loole</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(195.04 190)" fill="#91cc75"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(195.04 190)" fill="#333">flume</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(264.44 190)" fill="#fac858"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(264.44 190)" fill="#333">async-channel</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(382.08 190)" fill="#ee6666"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" x="30" y="7" transform="translate(382.08 190)" fill="#333">tokio</text>
+<path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0" transform="translate(447.52 190)" fill="#73c0de"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" x="30" y="7" transform="translate(447.52 190)" fill="#333">kanal (std-mutex)</text>
 <path d="M-120.5 -4.5l241 0l0 23l-241 0Z" transform="translate(350 16)" fill="#ddd8" stroke="#ccc"></path>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:14px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="7" transform="translate(350 16)" fill="#464646">1 async sender / 1 sync receiver</text>
 </svg>
