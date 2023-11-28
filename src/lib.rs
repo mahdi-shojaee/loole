@@ -46,6 +46,8 @@ mod queue;
 mod signal;
 
 use std::future::Future;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::MutexGuard;
 use std::task::{Context, Poll};
@@ -279,8 +281,6 @@ struct SharedState<T> {
     closed: bool,
     cap: Option<usize>,
     len: usize,
-    send_count: usize,
-    recv_count: usize,
     next_id: usize,
 }
 
@@ -294,8 +294,6 @@ impl<T> SharedState<T> {
             closed: false,
             cap,
             len: 0,
-            send_count: 1,
-            recv_count: 1,
             next_id: 1,
         }
     }
@@ -463,6 +461,7 @@ impl<T> Drop for RecvFuture<T> {
 /// The sending half of a channel.
 pub struct Sender<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
+    send_count: Arc<AtomicUsize>,
 }
 
 impl<T> std::fmt::Debug for Sender<T> {
@@ -475,19 +474,20 @@ impl<T> Clone for Sender<T> {
     /// Clones this sender. A [`Sender`] acts as a handle to the sending end of a channel. The remaining
     /// contents of the channel will only be cleaned up when all senders and the receiver have been dropped.
     fn clone(&self) -> Self {
-        let mut guard = self.shared_state.lock();
-        if guard.send_count > 0 {
-            guard.send_count += 1;
-        }
+        self.send_count.fetch_add(1, Ordering::Relaxed);
         Self {
             shared_state: Arc::clone(&self.shared_state),
+            send_count: Arc::clone(&self.send_count),
         }
     }
 }
 
 impl<T> Sender<T> {
     fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
-        Self { shared_state }
+        Self {
+            shared_state,
+            send_count: Arc::new(AtomicUsize::new(1)),
+        }
     }
 
     /// It returns an error if the channel is bounded and full, or if all receivers have been dropped.
@@ -619,13 +619,18 @@ impl<T> Sender<T> {
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        let mut guard = self.shared_state.lock();
-        if guard.send_count > 0 {
-            guard.send_count -= 1;
-            if guard.send_count == 0 && guard.recv_count > 0 {
-                guard.close();
-            }
-        }
+        let _ = self
+            .send_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                let mut count = c;
+                if count > 0 {
+                    count -= 1;
+                    if count == 0 {
+                        self.shared_state.lock().close();
+                    }
+                }
+                Some(count)
+            });
     }
 }
 
@@ -636,6 +641,8 @@ impl<T> Drop for Sender<T> {
 /// implementing work stealing for concurrent programs.
 pub struct Receiver<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
+    recv_count: Arc<AtomicUsize>,
+    next_id: Arc<AtomicUsize>,
 }
 
 impl<T> std::fmt::Debug for Receiver<T> {
@@ -653,19 +660,26 @@ impl<T> Clone for Receiver<T> {
     /// Each message will only be received by a single receiver. This is useful for
     /// implementing work stealing for concurrent programs.
     fn clone(&self) -> Self {
-        let mut guard = self.shared_state.lock();
-        if guard.recv_count > 0 {
-            guard.recv_count += 1;
-        }
+        self.recv_count.fetch_add(1, Ordering::Relaxed);
         Self {
             shared_state: Arc::clone(&self.shared_state),
+            recv_count: Arc::clone(&self.recv_count),
+            next_id: Arc::clone(&self.next_id),
         }
     }
 }
 
 impl<T> Receiver<T> {
     fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
-        Self { shared_state }
+        Self {
+            shared_state,
+            recv_count: Arc::new(AtomicUsize::new(1)),
+            next_id: Arc::new(AtomicUsize::new(1)),
+        }
+    }
+
+    fn get_next_id(&self) -> usize {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Attempts to receive a value from the channel associated with this receiver, returning an error if
@@ -684,7 +698,7 @@ impl<T> Receiver<T> {
     /// or with an error if the channel is closed.
     pub fn recv_async(&self) -> RecvFuture<T> {
         RecvFuture {
-            id: self.shared_state.lock().get_next_id(),
+            id: self.get_next_id(),
             shared_state: Arc::clone(&self.shared_state),
         }
     }
@@ -781,13 +795,18 @@ impl<T> Receiver<T> {
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        let mut guard = self.shared_state.lock();
-        if guard.recv_count > 0 {
-            guard.recv_count -= 1;
-            if guard.recv_count == 0 && guard.send_count > 0 {
-                guard.close();
-            }
-        }
+        let _ = self
+            .recv_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                let mut count = c;
+                if count > 0 {
+                    count -= 1;
+                    if count == 0 {
+                        self.shared_state.lock().close();
+                    }
+                }
+                Some(count)
+            });
     }
 }
 
