@@ -3,6 +3,7 @@
 use std::io::prelude::*;
 use std::io::prelude::*;
 use std::path::Path;
+use std::process::Stdio;
 use std::{fs::File, path::PathBuf};
 
 use chart_data::{get_bench_data, Item};
@@ -42,6 +43,7 @@ fn main() {
     match std::process::Command::new("npm")
         .args(["install"])
         .current_dir(&charts_dir)
+        .stdout(Stdio::null())
         .status()
     {
         Ok(_) => {}
@@ -55,6 +57,7 @@ fn main() {
     match std::process::Command::new("npm")
         .args(["run", "update"])
         .current_dir(&charts_dir)
+        .stdout(Stdio::null())
         .status()
     {
         Ok(_) => println!("Charts updated successfully"),
