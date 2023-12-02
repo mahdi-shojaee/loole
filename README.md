@@ -38,7 +38,7 @@ fn main() {
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.1.12"
+loole = "0.1.13"
 ```
 
 ## Run Benchmarks
@@ -58,7 +58,9 @@ The above command will generate and update the benchmark images in the README.md
 ## Benchmark Results
 
 Benchmark results on:
+
 OS: Ubuntu Linux 23.10, Kernel: 6.5.0-13
+
 CPU: Intel Core i7-13700K (16/24-core/thread)
 
 ### MPSC
