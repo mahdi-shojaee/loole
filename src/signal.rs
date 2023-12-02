@@ -145,4 +145,12 @@ impl Signal {
             Self::Sync(s) => s.notify(),
         }
     }
+
+    #[inline(always)]
+    pub fn wake_by_ref(&self) {
+        match self {
+            Self::Async(s) => s.waker.wake_by_ref(),
+            Self::Sync(s) => s.notify(),
+        }
+    }
 }

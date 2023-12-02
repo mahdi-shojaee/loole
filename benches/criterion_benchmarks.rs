@@ -309,7 +309,8 @@ async fn async_select_recv_buffer_0(msg_no: usize) {
 }
 
 fn criterion_benchmarks(c: &mut Criterion) {
-    let msg_no = black_box(200_000);
+    let msg_no = black_box(1_000_000);
+    let buffer_size = 100;
     let sample_size = 10;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -317,144 +318,148 @@ fn criterion_benchmarks(c: &mut Criterion) {
         .build()
         .unwrap();
 
-    let mut select = c.benchmark_group("select");
-    select.sample_size(sample_size);
-    select.bench_function("async_select_recv_buffer_0", |b| {
-        b.iter(|| rt.block_on(async_select_recv_buffer_0(msg_no)))
-    });
-    drop(select);
+    {
+        let mut select = c.benchmark_group("select");
+        select.sample_size(sample_size);
+        select.bench_function("async_select_recv_buffer_0", |b| {
+            b.iter(|| rt.block_on(async_select_recv_buffer_0(msg_no)))
+        });
+    }
 
-    let mut mpsc = c.benchmark_group("MPSC");
-    mpsc.sample_size(sample_size);
-    mpsc.bench_function("5000_sync_1_sync", |b| {
-        b.iter(|| {
-            rt.block_on(bench_sync_sync::<usize>(
-                black_box(5_000),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    mpsc.bench_function("5000_async_1_async", |b| {
-        b.iter(|| {
-            rt.block_on(bench_async_async::<usize>(
-                black_box(5_000),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    mpsc.bench_function("5000_async_1_sync", |b| {
-        b.iter(|| {
-            rt.block_on(bench_async_sync::<usize>(
-                black_box(5_000),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    mpsc.bench_function("5000_sync_1_async", |b| {
-        b.iter(|| {
-            rt.block_on(bench_sync_async::<usize>(
-                black_box(5_000),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    drop(mpsc);
+    {
+        let mut mpsc = c.benchmark_group("MPSC");
+        mpsc.sample_size(sample_size);
+        mpsc.bench_function("5000_sync_1_sync", |b| {
+            b.iter(|| {
+                rt.block_on(bench_sync_sync::<usize>(
+                    black_box(5_000),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        mpsc.bench_function("5000_async_1_async", |b| {
+            b.iter(|| {
+                rt.block_on(bench_async_async::<usize>(
+                    black_box(5_000),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        mpsc.bench_function("5000_async_1_sync", |b| {
+            b.iter(|| {
+                rt.block_on(bench_async_sync::<usize>(
+                    black_box(5_000),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        mpsc.bench_function("5000_sync_1_async", |b| {
+            b.iter(|| {
+                rt.block_on(bench_sync_async::<usize>(
+                    black_box(5_000),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+    }
 
-    let mut mpmc = c.benchmark_group("MPMC");
-    mpmc.sample_size(sample_size);
-    mpmc.bench_function("5000_sync_10_sync", |b| {
-        b.iter(|| {
-            rt.block_on(bench_sync_sync::<usize>(
-                black_box(5_000),
-                black_box(10),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    mpmc.bench_function("5000_async_10_async", |b| {
-        b.iter(|| {
-            rt.block_on(bench_async_async::<usize>(
-                black_box(5_000),
-                black_box(10),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    mpmc.bench_function("5000_async_10_sync", |b| {
-        b.iter(|| {
-            rt.block_on(bench_async_sync::<usize>(
-                black_box(5_000),
-                black_box(10),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    mpmc.bench_function("5000_sync_10_async", |b| {
-        b.iter(|| {
-            rt.block_on(bench_sync_async::<usize>(
-                black_box(5_000),
-                black_box(10),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    drop(mpmc);
+    {
+        let mut mpmc = c.benchmark_group("MPMC");
+        mpmc.sample_size(sample_size);
+        mpmc.bench_function("5000_sync_10_sync", |b| {
+            b.iter(|| {
+                rt.block_on(bench_sync_sync::<usize>(
+                    black_box(5_000),
+                    black_box(10),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        mpmc.bench_function("5000_async_10_async", |b| {
+            b.iter(|| {
+                rt.block_on(bench_async_async::<usize>(
+                    black_box(5_000),
+                    black_box(10),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        mpmc.bench_function("5000_async_10_sync", |b| {
+            b.iter(|| {
+                rt.block_on(bench_async_sync::<usize>(
+                    black_box(5_000),
+                    black_box(10),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        mpmc.bench_function("5000_sync_10_async", |b| {
+            b.iter(|| {
+                rt.block_on(bench_sync_async::<usize>(
+                    black_box(5_000),
+                    black_box(10),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+    }
 
-    let mut spsc = c.benchmark_group("SPSC");
-    spsc.sample_size(sample_size);
-    spsc.bench_function("1_sync_1_sync", |b| {
-        b.iter(|| {
-            rt.block_on(bench_sync_sync::<usize>(
-                black_box(1),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    spsc.bench_function("1_async_1_async", |b| {
-        b.iter(|| {
-            rt.block_on(bench_async_async::<usize>(
-                black_box(1),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    spsc.bench_function("1_async_1_sync", |b| {
-        b.iter(|| {
-            rt.block_on(bench_async_sync::<usize>(
-                black_box(1),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    spsc.bench_function("1_sync_1_async", |b| {
-        b.iter(|| {
-            rt.block_on(bench_sync_async::<usize>(
-                black_box(1),
-                black_box(1),
-                black_box(Some(0)),
-                msg_no,
-            ))
-        })
-    });
-    drop(spsc);
+    {
+        let mut spsc = c.benchmark_group("SPSC");
+        spsc.sample_size(sample_size);
+        spsc.bench_function("1_sync_1_sync", |b| {
+            b.iter(|| {
+                rt.block_on(bench_sync_sync::<usize>(
+                    black_box(1),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        spsc.bench_function("1_async_1_async", |b| {
+            b.iter(|| {
+                rt.block_on(bench_async_async::<usize>(
+                    black_box(1),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        spsc.bench_function("1_async_1_sync", |b| {
+            b.iter(|| {
+                rt.block_on(bench_async_sync::<usize>(
+                    black_box(1),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+        spsc.bench_function("1_sync_1_async", |b| {
+            b.iter(|| {
+                rt.block_on(bench_sync_async::<usize>(
+                    black_box(1),
+                    black_box(1),
+                    black_box(Some(buffer_size)),
+                    msg_no,
+                ))
+            })
+        });
+    }
 }
 
 criterion_group!(benches, criterion_benchmarks);

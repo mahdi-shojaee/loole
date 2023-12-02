@@ -34,11 +34,42 @@ impl<T> Queue<T> {
         self.inner.remove(self.index_by_id(id)?)
     }
 
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn iter(&self) -> Iter<'_, T> {
+        Iter {
+            inner: self.inner.iter(),
+        }
+    }
+
     fn index_by_id(&self, id: usize) -> Option<usize> {
         self.inner
             .iter()
             .enumerate()
             .find(|(_, m)| m.0 == id)
             .map(|(index, _)| index)
+    }
+}
+
+pub struct Iter<'a, T> {
+    inner: std::collections::vec_deque::Iter<'a, (usize, T)>,
+}
+
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a (usize, T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Queue<T> {
+    type Item = &'a (usize, T);
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }

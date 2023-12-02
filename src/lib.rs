@@ -49,7 +49,6 @@ use std::future::Future;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-// use std::sync::MutexGuard;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -275,12 +274,10 @@ impl<T> Iterator for IntoIter<T> {
 
 #[derive(Debug)]
 struct SharedState<T> {
-    recv_signals: Queue<Signal>,
-    send_siganls: Queue<Signal>,
-    pending_sends: Queue<T>,
+    pending_recvs: Queue<Signal>,
+    pending_sends: Queue<(T, Option<Signal>)>,
     closed: bool,
     cap: Option<usize>,
-    len: usize,
     next_id: usize,
 }
 
@@ -288,22 +285,25 @@ impl<T> SharedState<T> {
     fn new(cap: Option<usize>) -> Self {
         let pending_sends = cap.map_or_else(Queue::new, Queue::with_capacity);
         Self {
-            recv_signals: Queue::new(),
-            send_siganls: Queue::new(),
+            pending_recvs: Queue::new(),
             pending_sends,
             closed: false,
             cap,
-            len: 0,
             next_id: 1,
         }
     }
 
+    fn len(&self) -> usize {
+        let len = self.pending_sends.len();
+        self.cap.map_or(len, |cap| cap.min(len))
+    }
+
     fn is_full(&self) -> bool {
-        Some(self.len) == self.cap
+        Some(self.len()) == self.cap
     }
 
     fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
     fn get_next_id(&mut self) -> usize {
@@ -314,76 +314,16 @@ impl<T> SharedState<T> {
 
     fn close(&mut self) {
         self.closed = true;
-        while let Some((_, s)) = self.recv_signals.dequeue() {
-            s.wake();
+        for (_, s) in self.pending_recvs.iter() {
+            s.wake_by_ref();
         }
-        while let Some((_, s)) = self.send_siganls.dequeue() {
-            s.wake();
+        for (_, (_, s)) in self.pending_sends.iter() {
+            if let Some(s) = s {
+                s.wake_by_ref();
+            }
         }
     }
 }
-
-// fn try_send_core<T>(
-//     id: usize,
-//     m: T,
-//     guard: &mut MutexGuard<SharedState<T>>,
-// ) -> Result<(), TrySendError<T>> {
-//     if guard.closed {
-//         return Err(TrySendError::Disconnected(m));
-//     }
-//     if let Some((_, s)) = guard.recv_signals.dequeue() {
-//         guard.pending_sends.enqueue(id, m);
-//         s.wake();
-//         return Ok(());
-//     }
-//     if guard.is_full() {
-//         return Err(TrySendError::Full(m));
-//     }
-//     guard.pending_sends.enqueue(id, m);
-//     guard.len += 1;
-//     if let Some((_, s)) = guard.recv_signals.dequeue() {
-//         s.wake();
-//     }
-//     Ok(())
-// }
-
-// fn try_recv_core<T, F>(
-//     shared_state: &Mutex<SharedState<T>>,
-//     get_signal: F,
-// ) -> Result<T, TryRecvError>
-// where
-//     F: FnOnce() -> Option<(usize, Signal)>,
-// {
-//     let mut guard = shared_state.lock();
-//     if !guard.is_empty() {
-//         if let Some((_, m)) = guard.pending_sends.dequeue() {
-//             guard.len -= 1;
-//             if let Some((_, s)) = guard.send_siganls.dequeue() {
-//                 guard.len += 1;
-//                 drop(guard);
-//                 s.wake();
-//             }
-//             return Ok(m);
-//         }
-//     }
-//     // For rendezvous (zero buffer) channels.
-//     if let Some((_, m)) = guard.pending_sends.dequeue() {
-//         if let Some((_, s)) = guard.send_siganls.dequeue() {
-//             drop(guard);
-//             s.wake();
-//         }
-//         return Ok(m);
-//     }
-//     if guard.closed {
-//         return Err(TryRecvError::Disconnected);
-//     }
-//     if let Some(s) = get_signal() {
-//         if s.0 == 0 || !guard.recv_signals.contains(s.0) {
-//             guard.recv_signals.enqueue(s.0, s.1);
-//         }
-//     }
-//     Err(TryRecvError::Empty)
-// }
 
 /// A future that sends a value into a channel.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
@@ -404,7 +344,7 @@ impl<T> Future for SendFuture<T> {
             None => {
                 let mut guard = self.shared_state.lock();
                 if guard.closed {
-                    if let Some((_, m)) = guard.pending_sends.dequeue() {
+                    if let Some((_, (m, _))) = guard.pending_sends.dequeue() {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
@@ -412,34 +352,27 @@ impl<T> Future for SendFuture<T> {
             }
         };
         let mut guard = self.shared_state.lock();
-        // let m = match try_send_core(0, m, &mut guard) {
-        //     Ok(()) => return Poll::Ready(Ok(())),
-        //     Err(TrySendError::Disconnected(m)) => return Poll::Ready(Err(SendError(m))),
-        //     Err(TrySendError::Full(m)) => m,
-        // };
-        ///////////////////////////////////////////////////////////////////////////////////
         if guard.closed {
             return Poll::Ready(Err(SendError(m)));
         }
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
-            guard.pending_sends.enqueue(0, m);
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
             drop(guard);
             s.wake();
             return Poll::Ready(Ok(()));
         }
         if !guard.is_full() {
-            guard.pending_sends.enqueue(0, m);
-            guard.len += 1;
-            if let Some((_, s)) = guard.recv_signals.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
+            if let Some((_, s)) = guard.pending_recvs.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Poll::Ready(Ok(()));
         }
-        ///////////////////////////////////////////////////////////////////////////////////
-        guard.pending_sends.enqueue(0, m);
-        guard.send_siganls.enqueue(0, cx.waker().clone().into());
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
+        guard
+            .pending_sends
+            .enqueue(0, (m, Some(cx.waker().clone().into())));
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
             s.wake();
         }
@@ -461,29 +394,9 @@ impl<T> Future for RecvFuture<T> {
     type Output = Result<T, RecvError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // match try_recv_core(&self.shared_state, || {
-        //     Some((self.id, cx.waker().clone().into()))
-        // }) {
-        //     Ok(m) => Poll::Ready(Ok(m)),
-        //     Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError::Disconnected)),
-        //     Err(TryRecvError::Empty) => Poll::Pending,
-        // }
-        ////////////////////////////////////////////////////////////////////////////////////
         let mut guard = self.shared_state.lock();
-        if !guard.is_empty() {
-            if let Some((_, m)) = guard.pending_sends.dequeue() {
-                guard.len -= 1;
-                if let Some((_, s)) = guard.send_siganls.dequeue() {
-                    guard.len += 1;
-                    drop(guard);
-                    s.wake();
-                }
-                return Poll::Ready(Ok(m));
-            }
-        }
-        // For rendezvous (zero buffer) channels.
-        if let Some((_, m)) = guard.pending_sends.dequeue() {
-            if let Some((_, s)) = guard.send_siganls.dequeue() {
+        if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+            if let Some(s) = s {
                 drop(guard);
                 s.wake();
             }
@@ -492,20 +405,19 @@ impl<T> Future for RecvFuture<T> {
         if guard.closed {
             return Poll::Ready(Err(RecvError::Disconnected));
         }
-        if self.id == 0 || !guard.recv_signals.contains(self.id) {
+        if self.id == 0 || !guard.pending_recvs.contains(self.id) {
             guard
-                .recv_signals
+                .pending_recvs
                 .enqueue(self.id, cx.waker().clone().into());
         }
         Poll::Pending
-        ////////////////////////////////////////////////////////////////////////////////////
     }
 }
 
 impl<T> Drop for RecvFuture<T> {
     fn drop(&mut self) {
         let mut guard = self.shared_state.lock();
-        guard.recv_signals.remove(self.id);
+        guard.pending_recvs.remove(self.id);
     }
 }
 
@@ -550,14 +462,12 @@ impl<T> Sender<T> {
     /// take appropriate action, such as retrying the send operation later or buffering the value
     /// until you can send it successfully.
     pub fn try_send(&self, m: T) -> Result<(), TrySendError<T>> {
-        // try_send_core(0, m, &mut self.shared_state.lock())
-        ///////////////////////////////////////////////////////////////
         let mut guard = self.shared_state.lock();
         if guard.closed {
             return Err(TrySendError::Disconnected(m));
         }
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
-            guard.pending_sends.enqueue(0, m);
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
             drop(guard);
             s.wake();
             return Ok(());
@@ -565,9 +475,8 @@ impl<T> Sender<T> {
         if guard.is_full() {
             return Err(TrySendError::Full(m));
         }
-        guard.pending_sends.enqueue(0, m);
-        guard.len += 1;
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
+        guard.pending_sends.enqueue(0, (m, None));
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
             s.wake();
         }
@@ -589,38 +498,30 @@ impl<T> Sender<T> {
     /// Sends a value into the channel. Returns an error if all receivers have been dropped, or if
     /// the channel is bounded and is full and no receivers are available.
     pub fn send(&self, m: T) -> Result<(), SendError<T>> {
-        let sync_signal = SyncSignal::new();
         let mut guard = self.shared_state.lock();
-        /////////////////////////////////////////////////////////////////////////
-        // let m = match try_send_core(0, m, &mut guard) {
-        //     Ok(()) => return Ok(()),
-        //     Err(TrySendError::Disconnected(m)) => return Err(SendError(m)),
-        //     Err(TrySendError::Full(m)) => m,
-        // };
-        /////////////////////////////////////////////////////////////////////////
         if guard.closed {
             return Err(SendError(m));
         }
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
-            guard.pending_sends.enqueue(0, m);
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
             drop(guard);
             s.wake();
             return Ok(());
         }
         if !guard.is_full() {
-            guard.pending_sends.enqueue(0, m);
-            guard.len += 1;
-            if let Some((_, s)) = guard.recv_signals.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
+            if let Some((_, s)) = guard.pending_recvs.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Ok(());
         }
-        /////////////////////////////////////////////////////////////////////////
         let id = guard.get_next_id();
-        guard.pending_sends.enqueue(id, m);
-        guard.send_siganls.enqueue(id, sync_signal.clone().into());
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
+        let sync_signal = SyncSignal::new();
+        guard
+            .pending_sends
+            .enqueue(id, (m, Some(sync_signal.clone().into())));
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
             s.wake();
             return Ok(());
@@ -629,8 +530,7 @@ impl<T> Sender<T> {
         sync_signal.wait();
         let mut guard = self.shared_state.lock();
         if guard.closed {
-            if let Some((_, m)) = guard.pending_sends.remove(id) {
-                guard.send_siganls.remove(id);
+            if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
                 return Err(SendError(m));
             }
         }
@@ -643,47 +543,36 @@ impl<T> Sender<T> {
     /// an error. If the channel is bounded and is full, this method will block until space is
     /// available, the timeout has expired, or all receivers have been dropped.
     pub fn send_timeout(&self, m: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
-        let sync_signal = SyncSignal::new();
         let mut guard = self.shared_state.lock();
-        ///////////////////////////////////////////////////////////////////////////////////////////
-        // let m = match try_send_core(0, m, &mut guard) {
-        //     Ok(()) => return Ok(()),
-        //     Err(TrySendError::Disconnected(m)) => return Err(SendTimeoutError::Disconnected(m)),
-        //     Err(TrySendError::Full(m)) => m,
-        // };
-        ///////////////////////////////////////////////////////////////////////////////////////////
         if guard.closed {
             return Err(SendTimeoutError::Disconnected(m));
         }
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
-            guard.pending_sends.enqueue(0, m);
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
             drop(guard);
             s.wake();
             return Ok(());
         }
         if !guard.is_full() {
-            guard.pending_sends.enqueue(0, m);
-            guard.len += 1;
-            if let Some((_, s)) = guard.recv_signals.dequeue() {
+            guard.pending_sends.enqueue(0, (m, None));
+            if let Some((_, s)) = guard.pending_recvs.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Ok(());
         }
-        ///////////////////////////////////////////////////////////////////////////////////////////
         let id = guard.get_next_id();
-        guard.pending_sends.enqueue(id, m);
-        guard.send_siganls.enqueue(id, sync_signal.clone().into());
-        if let Some((_, s)) = guard.recv_signals.dequeue() {
+        guard.pending_sends.enqueue(id, (m, None));
+        if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
             s.wake();
             return Ok(());
         }
         drop(guard);
+        let sync_signal = SyncSignal::new();
         let _ = sync_signal.wait_timeout(timeout);
         let mut guard = self.shared_state.lock();
-        if let Some((_, m)) = guard.pending_sends.remove(id) {
-            guard.send_siganls.remove(id);
+        if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
             if guard.closed {
                 return Err(SendTimeoutError::Disconnected(m));
             }
@@ -708,7 +597,7 @@ impl<T> Sender<T> {
     /// This function is useful for determining how many messages are waiting to be processed
     /// by consumers, or for implementing backpressure mechanisms.
     pub fn len(&self) -> usize {
-        self.shared_state.lock().len
+        self.shared_state.lock().len()
     }
 
     /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
@@ -802,23 +691,9 @@ impl<T> Receiver<T> {
     /// This method will block until a value is available on the channel, or until the channel is empty
     /// or all senders have been dropped.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        // try_recv_core(&self.shared_state, || None)
-        ////////////////////////////////////////////////////////
         let mut guard = self.shared_state.lock();
-        if !guard.is_empty() {
-            if let Some((_, m)) = guard.pending_sends.dequeue() {
-                guard.len -= 1;
-                if let Some((_, s)) = guard.send_siganls.dequeue() {
-                    guard.len += 1;
-                    drop(guard);
-                    s.wake();
-                }
-                return Ok(m);
-            }
-        }
-        // For rendezvous (zero buffer) channels.
-        if let Some((_, m)) = guard.pending_sends.dequeue() {
-            if let Some((_, s)) = guard.send_siganls.dequeue() {
+        if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+            if let Some(s) = s {
                 drop(guard);
                 s.wake();
             }
@@ -846,29 +721,9 @@ impl<T> Receiver<T> {
     /// dropped and there are no more messages in the channel, this method will return an error.
     pub fn recv(&self) -> Result<T, RecvError> {
         loop {
-            let sync_signal = SyncSignal::new();
-            //////////////////////////////////////////////////////////////////////////////////////
-            // match try_recv_core(&self.shared_state, || Some((0, sync_signal.clone().into()))) {
-            //     Ok(m) => return Ok(m),
-            //     Err(TryRecvError::Disconnected) => return Err(RecvError::Disconnected),
-            //     Err(TryRecvError::Empty) => {}
-            // };
-            //////////////////////////////////////////////////////////////////////////////////////
             let mut guard = self.shared_state.lock();
-            if !guard.is_empty() {
-                if let Some((_, m)) = guard.pending_sends.dequeue() {
-                    guard.len -= 1;
-                    if let Some((_, s)) = guard.send_siganls.dequeue() {
-                        guard.len += 1;
-                        drop(guard);
-                        s.wake();
-                    }
-                    return Ok(m);
-                }
-            }
-            // For rendezvous (zero buffer) channels.
-            if let Some((_, m)) = guard.pending_sends.dequeue() {
-                if let Some((_, s)) = guard.send_siganls.dequeue() {
+            if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+                if let Some(s) = s {
                     drop(guard);
                     s.wake();
                 }
@@ -877,9 +732,9 @@ impl<T> Receiver<T> {
             if guard.closed {
                 return Err(RecvError::Disconnected);
             }
-            guard.recv_signals.enqueue(0, sync_signal.clone().into());
+            let sync_signal = SyncSignal::new();
+            guard.pending_recvs.enqueue(0, sync_signal.clone().into());
             drop(guard);
-            //////////////////////////////////////////////////////////////////////////////////////
             sync_signal.wait();
         }
     }
@@ -890,36 +745,9 @@ impl<T> Receiver<T> {
         let start_time = Instant::now();
         let mut timeout_remaining = timeout;
         loop {
-            let sync_signal = SyncSignal::new();
-            ///////////////////////////////////////////////////////////////////////////////////////////////
-            // match try_recv_core(&self.shared_state, || Some((0, sync_signal.clone().into()))) {
-            //     Ok(m) => return Ok(m),
-            //     Err(TryRecvError::Disconnected) => return Err(RecvTimeoutError::Disconnected),
-            //     Err(TryRecvError::Empty) => {
-            //         let _ = sync_signal.wait_timeout(timeout_remaining);
-            //         let elapsed = start_time.elapsed();
-            //         if elapsed >= timeout {
-            //             return Err(RecvTimeoutError::Timeout);
-            //         }
-            //         timeout_remaining = timeout - elapsed;
-            //     }
-            // }
-            ///////////////////////////////////////////////////////////////////////////////////////////////
             let mut guard = self.shared_state.lock();
-            if !guard.is_empty() {
-                if let Some((_, m)) = guard.pending_sends.dequeue() {
-                    guard.len -= 1;
-                    if let Some((_, s)) = guard.send_siganls.dequeue() {
-                        guard.len += 1;
-                        drop(guard);
-                        s.wake();
-                    }
-                    return Ok(m);
-                }
-            }
-            // For rendezvous (zero buffer) channels.
-            if let Some((_, m)) = guard.pending_sends.dequeue() {
-                if let Some((_, s)) = guard.send_siganls.dequeue() {
+            if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+                if let Some(s) = s {
                     drop(guard);
                     s.wake();
                 }
@@ -928,7 +756,8 @@ impl<T> Receiver<T> {
             if guard.closed {
                 return Err(RecvTimeoutError::Disconnected);
             }
-            guard.recv_signals.enqueue(0, sync_signal.clone().into());
+            let sync_signal = SyncSignal::new();
+            guard.pending_recvs.enqueue(0, sync_signal.clone().into());
             drop(guard);
             let _ = sync_signal.wait_timeout(timeout_remaining);
             let elapsed = start_time.elapsed();
@@ -936,7 +765,6 @@ impl<T> Receiver<T> {
                 return Err(RecvTimeoutError::Timeout);
             }
             timeout_remaining = timeout - elapsed;
-            ///////////////////////////////////////////////////////////////////////////////////////////////
         }
     }
 
@@ -971,7 +799,7 @@ impl<T> Receiver<T> {
     /// This function is useful for determining how many messages are waiting to be processed
     /// by consumers, or for implementing backpressure mechanisms.
     pub fn len(&self) -> usize {
-        self.shared_state.lock().len
+        self.shared_state.lock().len()
     }
 
     /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
