@@ -21,7 +21,7 @@ async-std = { version = "1.12.0", features = ["attributes", "unstable"] }
 futures = { version = "^0.3", features = ["std"] }
 crossbeam-utils = "0.8.16"
 rand = "0.8.5"
-criterion = { version = "0.4", features = ["html_reports"] }
+criterion = { version = "0.5.1", features = ["html_reports"] }
 
 [[bench]]
 name = "criterion_benchmarks"
