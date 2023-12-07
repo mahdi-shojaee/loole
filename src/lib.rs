@@ -355,14 +355,15 @@ impl<T> Future for SendFuture<T> {
         if guard.closed {
             return Poll::Ready(Err(SendError(m)));
         }
+        let id = guard.get_next_id();
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             drop(guard);
             s.wake();
             return Poll::Ready(Ok(()));
         }
         if !guard.is_full() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             if let Some((_, s)) = guard.pending_recvs.dequeue() {
                 drop(guard);
                 s.wake();
@@ -371,7 +372,7 @@ impl<T> Future for SendFuture<T> {
         }
         guard
             .pending_sends
-            .enqueue(0, (m, Some(cx.waker().clone().into())));
+            .enqueue(id, (m, Some(cx.waker().clone().into())));
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
             s.wake();
@@ -405,7 +406,7 @@ impl<T> Future for RecvFuture<T> {
         if guard.closed {
             return Poll::Ready(Err(RecvError::Disconnected));
         }
-        if self.id == 0 || !guard.pending_recvs.contains(self.id) {
+        if !guard.pending_recvs.contains(self.id) {
             guard
                 .pending_recvs
                 .enqueue(self.id, cx.waker().clone().into());
@@ -425,6 +426,7 @@ impl<T> Drop for RecvFuture<T> {
 pub struct Sender<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
     send_count: Arc<AtomicUsize>,
+    next_id: Arc<AtomicUsize>,
 }
 
 impl<T> std::fmt::Debug for Sender<T> {
@@ -441,6 +443,7 @@ impl<T> Clone for Sender<T> {
         Self {
             shared_state: Arc::clone(&self.shared_state),
             send_count: Arc::clone(&self.send_count),
+            next_id: Arc::clone(&self.next_id),
         }
     }
 }
@@ -450,7 +453,12 @@ impl<T> Sender<T> {
         Self {
             shared_state,
             send_count: Arc::new(AtomicUsize::new(1)),
+            next_id: Arc::new(AtomicUsize::new(1)),
         }
+    }
+
+    fn get_next_id(&self) -> usize {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// It returns an error if the channel is bounded and full, or if all receivers have been dropped.
@@ -466,8 +474,9 @@ impl<T> Sender<T> {
         if guard.closed {
             return Err(TrySendError::Disconnected(m));
         }
+        let id = self.get_next_id();
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             drop(guard);
             s.wake();
             return Ok(());
@@ -475,7 +484,7 @@ impl<T> Sender<T> {
         if guard.is_full() {
             return Err(TrySendError::Full(m));
         }
-        guard.pending_sends.enqueue(0, (m, None));
+        guard.pending_sends.enqueue(id, (m, None));
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
             s.wake();
@@ -502,21 +511,21 @@ impl<T> Sender<T> {
         if guard.closed {
             return Err(SendError(m));
         }
+        let id = self.get_next_id();
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             drop(guard);
             s.wake();
             return Ok(());
         }
         if !guard.is_full() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             if let Some((_, s)) = guard.pending_recvs.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Ok(());
         }
-        let id = guard.get_next_id();
         let sync_signal = SyncSignal::new();
         guard
             .pending_sends
@@ -547,21 +556,21 @@ impl<T> Sender<T> {
         if guard.closed {
             return Err(SendTimeoutError::Disconnected(m));
         }
+        let id = self.get_next_id();
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             drop(guard);
             s.wake();
             return Ok(());
         }
         if !guard.is_full() {
-            guard.pending_sends.enqueue(0, (m, None));
+            guard.pending_sends.enqueue(id, (m, None));
             if let Some((_, s)) = guard.pending_recvs.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Ok(());
         }
-        let id = guard.get_next_id();
         guard.pending_sends.enqueue(id, (m, None));
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
             drop(guard);
@@ -732,8 +741,9 @@ impl<T> Receiver<T> {
             if guard.closed {
                 return Err(RecvError::Disconnected);
             }
+            let id = self.get_next_id();
             let sync_signal = SyncSignal::new();
-            guard.pending_recvs.enqueue(0, sync_signal.clone().into());
+            guard.pending_recvs.enqueue(id, sync_signal.clone().into());
             drop(guard);
             sync_signal.wait();
         }
@@ -756,8 +766,9 @@ impl<T> Receiver<T> {
             if guard.closed {
                 return Err(RecvTimeoutError::Disconnected);
             }
+            let id = self.get_next_id();
             let sync_signal = SyncSignal::new();
-            guard.pending_recvs.enqueue(0, sync_signal.clone().into());
+            guard.pending_recvs.enqueue(id, sync_signal.clone().into());
             drop(guard);
             let _ = sync_signal.wait_timeout(timeout_remaining);
             let elapsed = start_time.elapsed();
