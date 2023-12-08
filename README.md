@@ -9,11 +9,6 @@ A safe async/sync multi-producer multi-consumer channel.
 
 Producers can send and consumers can receive messages asynchronously or synchronously:
 
-- `sync -> sync`
-- `async -> async`
-- `sync -> async`
-- `async -> sync`
-
 ```rust
 fn main() {
     let (tx, rx) = loole::unbounded();
@@ -38,7 +33,7 @@ fn main() {
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.1.13"
+loole = "0.1.14"
 ```
 
 ## Run Benchmarks

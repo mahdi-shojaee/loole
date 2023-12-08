@@ -1,7 +1,11 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{future::join_all, FutureExt};
 use loole::{bounded, RecvError, SendError};
+
+fn ms(ms: u64) -> Duration {
+    Duration::from_millis(ms)
+}
 
 async fn async_sleep(ms: u64) {
     tokio::time::sleep(Duration::from_millis(ms)).await
@@ -98,4 +102,31 @@ async fn async_concurrent_writes_and_reads_buffer_0() {
     .await
     .unwrap();
     assert_eq!(recvs, vec![Ok(1), Ok(2), Ok(3)]);
+}
+
+#[tokio::test]
+async fn async_shift_pending_send_to_queue() {
+    let (tx, rx) = bounded(2);
+    assert_eq!(tx.send_async(1).await, Ok(()));
+    assert_eq!(tx.send_async(2).await, Ok(()));
+    let h = tokio::spawn(async move {
+        let start = Instant::now();
+        assert_eq!(tx.send_async(3).await, Ok(()));
+        start.elapsed()
+    });
+    tokio::spawn(async move {
+        async_sleep(1000).await;
+        assert_eq!(rx.recv_async().await, Ok(1));
+    })
+    .await
+    .unwrap();
+
+    let elapsed = h.await.unwrap();
+    println!("elapsed: {:?}", elapsed);
+    assert!(
+        elapsed >= ms(900),
+        "sent too early, elapsed {:.2?}",
+        elapsed
+    );
+    assert!(elapsed < ms(1100), "sent too late, elapsed {:.2?}", elapsed);
 }

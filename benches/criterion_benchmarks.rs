@@ -1,10 +1,14 @@
+#![allow(dead_code)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use loole::{bounded, unbounded, Receiver, RecvError, SendError, Sender};
 use std::{error::Error, future::Future, thread, time::Instant};
 
 use std::fmt::{Debug, Display};
 
+const MESSAGES_NO: usize = 1_000_000;
 const MESSAGE_SIZE: usize = 256;
+const BUFFER_SIZE: Option<usize> = Some(100);
 
 type MsgType = StackType<MESSAGE_SIZE>;
 
@@ -375,8 +379,8 @@ async fn async_select_recv_buffer_0(msg_no: usize) {
 }
 
 fn criterion_benchmarks(c: &mut Criterion) {
-    let msg_no = black_box(1_000_000);
-    let buffer_size = Some(100);
+    let msg_no = black_box(MESSAGES_NO);
+    let buffer_size = BUFFER_SIZE;
     let sample_size = 10;
 
     let rt = tokio::runtime::Builder::new_multi_thread()

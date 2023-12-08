@@ -34,6 +34,10 @@ impl<T> Queue<T> {
         self.inner.remove(self.index_by_id(id)?)
     }
 
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut (usize, T)> {
+        self.inner.get_mut(index)
+    }
+
     pub fn len(&self) -> usize {
         self.inner.len()
     }

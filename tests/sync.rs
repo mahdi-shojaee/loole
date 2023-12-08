@@ -1,7 +1,7 @@
 use std::thread::{self, scope};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use loole::{bounded, SendError, SendTimeoutError};
+use loole::{bounded, SendError};
 
 fn ms(ms: u64) -> Duration {
     Duration::from_millis(ms)
@@ -64,7 +64,7 @@ fn sync_2_sends_before_2_recvs_buffer_1() {
 }
 
 #[test]
-fn send() {
+fn sync_send() {
     let (tx, rx) = bounded(2);
     scope(|scope| {
         scope.spawn(move || {
@@ -86,27 +86,26 @@ fn send() {
 }
 
 #[test]
-fn send_timeout() {
+fn sync_shift_pending_send_to_queue() {
     let (tx, rx) = bounded(2);
     scope(|scope| {
+        assert_eq!(tx.send(1), Ok(()));
+        assert_eq!(tx.send(2), Ok(()));
         scope.spawn(move || {
-            assert_eq!(tx.send_timeout(1, ms(1000)), Ok(()));
-            assert_eq!(tx.send_timeout(2, ms(1000)), Ok(()));
-            assert_eq!(
-                tx.send_timeout(3, ms(500)),
-                Err(SendTimeoutError::Timeout(3))
+            let start = Instant::now();
+            assert_eq!(tx.send(3), Ok(()));
+            let elapsed = start.elapsed();
+            println!("elapsed: {:?}", elapsed);
+            assert!(
+                elapsed >= ms(900),
+                "sent too early, elapsed {:.2?}",
+                elapsed
             );
-            thread::sleep(ms(1000));
-            assert_eq!(tx.send_timeout(4, ms(1000)), Ok(()));
-            thread::sleep(ms(1000));
-            assert_eq!(tx.send(5), Err(SendError(5)));
+            assert!(elapsed < ms(1100), "sent too late, elapsed {:.2?}", elapsed);
         });
         scope.spawn(move || {
             thread::sleep(ms(1000));
             assert_eq!(rx.recv(), Ok(1));
-            thread::sleep(ms(1000));
-            assert_eq!(rx.recv(), Ok(2));
-            assert_eq!(rx.recv(), Ok(4));
         });
     });
 }

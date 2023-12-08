@@ -344,7 +344,7 @@ impl<T> Future for SendFuture<T> {
             None => {
                 let mut guard = self.shared_state.lock();
                 if guard.closed {
-                    if let Some((_, (m, _))) = guard.pending_sends.dequeue() {
+                    if let Some((_, (m, Some(_)))) = guard.pending_sends.dequeue() {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
@@ -356,12 +356,6 @@ impl<T> Future for SendFuture<T> {
             return Poll::Ready(Err(SendError(m)));
         }
         let id = guard.get_next_id();
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(id, (m, None));
-            drop(guard);
-            s.wake();
-            return Poll::Ready(Ok(()));
-        }
         if !guard.is_full() {
             guard.pending_sends.enqueue(id, (m, None));
             if let Some((_, s)) = guard.pending_recvs.dequeue() {
@@ -369,6 +363,14 @@ impl<T> Future for SendFuture<T> {
                 s.wake();
             }
             return Poll::Ready(Ok(()));
+        }
+        if guard.is_empty() {
+            if let Some((_, s)) = guard.pending_recvs.dequeue() {
+                guard.pending_sends.enqueue(id, (m, None));
+                drop(guard);
+                s.wake();
+                return Poll::Ready(Ok(()));
+            }
         }
         guard
             .pending_sends
@@ -398,8 +400,16 @@ impl<T> Future for RecvFuture<T> {
         let mut guard = self.shared_state.lock();
         if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
             if let Some(s) = s {
-                drop(guard);
                 s.wake();
+            }
+            if let Some(cap) = guard.cap {
+                let index = 0_isize.max(cap as isize - 1) as usize;
+                if let Some((_, (_, s))) = guard.pending_sends.get_mut(index) {
+                    if let Some(s) = s.take() {
+                        drop(guard);
+                        s.wake();
+                    }
+                }
             }
             return Poll::Ready(Ok(m));
         }
@@ -475,11 +485,13 @@ impl<T> Sender<T> {
             return Err(TrySendError::Disconnected(m));
         }
         let id = self.get_next_id();
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(id, (m, None));
-            drop(guard);
-            s.wake();
-            return Ok(());
+        if Some(0) == guard.cap {
+            if let Some((_, s)) = guard.pending_recvs.dequeue() {
+                guard.pending_sends.enqueue(id, (m, None));
+                drop(guard);
+                s.wake();
+                return Ok(());
+            }
         }
         if guard.is_full() {
             return Err(TrySendError::Full(m));
@@ -489,7 +501,7 @@ impl<T> Sender<T> {
             drop(guard);
             s.wake();
         }
-        Ok(())
+        return Ok(());
     }
 
     /// Asynchronously send a value into the channel, it will return a future that completes when the
@@ -512,12 +524,6 @@ impl<T> Sender<T> {
             return Err(SendError(m));
         }
         let id = self.get_next_id();
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(id, (m, None));
-            drop(guard);
-            s.wake();
-            return Ok(());
-        }
         if !guard.is_full() {
             guard.pending_sends.enqueue(id, (m, None));
             if let Some((_, s)) = guard.pending_recvs.dequeue() {
@@ -526,20 +532,23 @@ impl<T> Sender<T> {
             }
             return Ok(());
         }
+        if guard.is_empty() {
+            if let Some((_, s)) = guard.pending_recvs.dequeue() {
+                guard.pending_sends.enqueue(id, (m, None));
+                drop(guard);
+                s.wake();
+                return Ok(());
+            }
+        }
         let sync_signal = SyncSignal::new();
         guard
             .pending_sends
             .enqueue(id, (m, Some(sync_signal.clone().into())));
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            drop(guard);
-            s.wake();
-            return Ok(());
-        }
         drop(guard);
         sync_signal.wait();
         let mut guard = self.shared_state.lock();
         if guard.closed {
-            if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
+            if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
                 return Err(SendError(m));
             }
         }
@@ -557,12 +566,6 @@ impl<T> Sender<T> {
             return Err(SendTimeoutError::Disconnected(m));
         }
         let id = self.get_next_id();
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            guard.pending_sends.enqueue(id, (m, None));
-            drop(guard);
-            s.wake();
-            return Ok(());
-        }
         if !guard.is_full() {
             guard.pending_sends.enqueue(id, (m, None));
             if let Some((_, s)) = guard.pending_recvs.dequeue() {
@@ -571,14 +574,9 @@ impl<T> Sender<T> {
             }
             return Ok(());
         }
-        guard.pending_sends.enqueue(id, (m, None));
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            drop(guard);
-            s.wake();
-            return Ok(());
-        }
-        drop(guard);
         let sync_signal = SyncSignal::new();
+        guard.pending_sends.enqueue(id, (m, None));
+        drop(guard);
         let _ = sync_signal.wait_timeout(timeout);
         let mut guard = self.shared_state.lock();
         if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
@@ -733,8 +731,16 @@ impl<T> Receiver<T> {
             let mut guard = self.shared_state.lock();
             if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
                 if let Some(s) = s {
-                    drop(guard);
                     s.wake();
+                }
+                if let Some(cap) = guard.cap {
+                    let index = 0_isize.max(cap as isize - 1) as usize;
+                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(index) {
+                        if let Some(s) = s.take() {
+                            drop(guard);
+                            s.wake();
+                        }
+                    }
                 }
                 return Ok(m);
             }
@@ -758,8 +764,16 @@ impl<T> Receiver<T> {
             let mut guard = self.shared_state.lock();
             if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
                 if let Some(s) = s {
-                    drop(guard);
                     s.wake();
+                }
+                if let Some(cap) = guard.cap {
+                    let index = 0_isize.max(cap as isize - 1) as usize;
+                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(index) {
+                        if let Some(s) = s.take() {
+                            drop(guard);
+                            s.wake();
+                        }
+                    }
                 }
                 return Ok(m);
             }
