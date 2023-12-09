@@ -7,8 +7,6 @@ A safe async/sync multi-producer multi-consumer channel.
 [![Cargo](https://img.shields.io/crates/v/loole.svg)](https://crates.io/crates/loole)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/mahdi-shojaee/loole)
 
-Producers can send and consumers can receive messages asynchronously or synchronously:
-
 ```rust
 fn main() {
     let (tx, rx) = loole::unbounded();
@@ -28,12 +26,14 @@ fn main() {
 }
 ```
 
+Producers can send and consumers can receive messages asynchronously or synchronously.
+
 ## Usage
 
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.1.14"
+loole = "0.1"
 ```
 
 ## Run Benchmarks

@@ -86,7 +86,36 @@ fn sync_send() {
 }
 
 #[test]
-fn sync_shift_pending_send_to_queue() {
+fn sync_shift_pending_send_buffer_0() {
+    let (tx, rx) = bounded(0);
+    let tx_clone = tx.clone();
+    scope(|scope| {
+        scope.spawn(move || {
+            let start = Instant::now();
+            assert_eq!(tx.send(1), Ok(()));
+            let elapsed = start.elapsed();
+            assert!(elapsed >= ms(900));
+            assert!(elapsed < ms(1100));
+        });
+        scope.spawn(move || {
+            let start = Instant::now();
+            thread::sleep(ms(100));
+            assert_eq!(tx_clone.send(2), Ok(()));
+            let elapsed = start.elapsed();
+            assert!(elapsed >= ms(1900));
+            assert!(elapsed < ms(2100));
+        });
+        scope.spawn(move || {
+            thread::sleep(ms(1000));
+            assert_eq!(rx.recv(), Ok(1));
+            thread::sleep(ms(1000));
+            assert_eq!(rx.recv(), Ok(2));
+        });
+    });
+}
+
+#[test]
+fn sync_shift_pending_send_buffer_2() {
     let (tx, rx) = bounded(2);
     scope(|scope| {
         assert_eq!(tx.send(1), Ok(()));
@@ -95,7 +124,6 @@ fn sync_shift_pending_send_to_queue() {
             let start = Instant::now();
             assert_eq!(tx.send(3), Ok(()));
             let elapsed = start.elapsed();
-            println!("elapsed: {:?}", elapsed);
             assert!(
                 elapsed >= ms(900),
                 "sent too early, elapsed {:.2?}",

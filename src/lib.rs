@@ -403,11 +403,12 @@ impl<T> Future for RecvFuture<T> {
                 s.wake();
             }
             if let Some(cap) = guard.cap {
-                let index = 0_isize.max(cap as isize - 1) as usize;
-                if let Some((_, (_, s))) = guard.pending_sends.get_mut(index) {
-                    if let Some(s) = s.take() {
-                        drop(guard);
-                        s.wake();
+                if cap > 0 {
+                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
+                        if let Some(s) = s.take() {
+                            drop(guard);
+                            s.wake();
+                        }
                     }
                 }
             }
@@ -701,8 +702,17 @@ impl<T> Receiver<T> {
         let mut guard = self.shared_state.lock();
         if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
             if let Some(s) = s {
-                drop(guard);
                 s.wake();
+            }
+            if let Some(cap) = guard.cap {
+                if cap > 0 {
+                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
+                        if let Some(s) = s.take() {
+                            drop(guard);
+                            s.wake();
+                        }
+                    }
+                }
             }
             return Ok(m);
         }
@@ -734,11 +744,12 @@ impl<T> Receiver<T> {
                     s.wake();
                 }
                 if let Some(cap) = guard.cap {
-                    let index = 0_isize.max(cap as isize - 1) as usize;
-                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(index) {
-                        if let Some(s) = s.take() {
-                            drop(guard);
-                            s.wake();
+                    if cap > 0 {
+                        if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
+                            if let Some(s) = s.take() {
+                                drop(guard);
+                                s.wake();
+                            }
                         }
                     }
                 }
@@ -767,11 +778,12 @@ impl<T> Receiver<T> {
                     s.wake();
                 }
                 if let Some(cap) = guard.cap {
-                    let index = 0_isize.max(cap as isize - 1) as usize;
-                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(index) {
-                        if let Some(s) = s.take() {
-                            drop(guard);
-                            s.wake();
+                    if cap > 0 {
+                        if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
+                            if let Some(s) = s.take() {
+                                drop(guard);
+                                s.wake();
+                            }
                         }
                     }
                 }

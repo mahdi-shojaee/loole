@@ -105,7 +105,36 @@ async fn async_concurrent_writes_and_reads_buffer_0() {
 }
 
 #[tokio::test]
-async fn async_shift_pending_send_to_queue() {
+async fn async_shift_pending_send_buffer_0() {
+    let (tx, rx) = bounded(0);
+    let tx_clone = tx.clone();
+    let h1 = tokio::spawn(async move {
+        let start = Instant::now();
+        assert_eq!(tx.send_async(1).await, Ok(()));
+        start.elapsed()
+    });
+    let h2 = tokio::spawn(async move {
+        let start = Instant::now();
+        async_sleep(100).await;
+        assert_eq!(tx_clone.send_async(2).await, Ok(()));
+        start.elapsed()
+    });
+    tokio::spawn(async move {
+        async_sleep(1000).await;
+        assert_eq!(rx.recv(), Ok(1));
+        async_sleep(1000).await;
+        assert_eq!(rx.recv(), Ok(2));
+    });
+    let elapsed1 = h1.await.unwrap();
+    assert!(elapsed1 >= ms(900));
+    assert!(elapsed1 < ms(1100));
+    let elapsed2 = h2.await.unwrap();
+    assert!(elapsed2 >= ms(1900));
+    assert!(elapsed2 < ms(2100));
+}
+
+#[tokio::test]
+async fn async_shift_pending_send_buffer_2() {
     let (tx, rx) = bounded(2);
     assert_eq!(tx.send_async(1).await, Ok(()));
     assert_eq!(tx.send_async(2).await, Ok(()));
@@ -122,11 +151,6 @@ async fn async_shift_pending_send_to_queue() {
     .unwrap();
 
     let elapsed = h.await.unwrap();
-    println!("elapsed: {:?}", elapsed);
-    assert!(
-        elapsed >= ms(900),
-        "sent too early, elapsed {:.2?}",
-        elapsed
-    );
-    assert!(elapsed < ms(1100), "sent too late, elapsed {:.2?}", elapsed);
+    assert!(elapsed >= ms(900));
+    assert!(elapsed < ms(1100));
 }
