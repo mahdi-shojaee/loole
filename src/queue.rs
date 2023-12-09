@@ -57,6 +57,12 @@ impl<T> Queue<T> {
     }
 }
 
+impl<T> Default for Queue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Iter<'a, T> {
     inner: std::collections::vec_deque::Iter<'a, (usize, T)>,
 }
