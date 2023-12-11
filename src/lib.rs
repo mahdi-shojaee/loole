@@ -274,8 +274,8 @@ impl<T> Iterator for IntoIter<T> {
 
 #[derive(Debug)]
 struct SharedState<T> {
-    pending_recvs: Queue<Signal>,
-    pending_sends: Queue<(T, Option<Signal>)>,
+    recv_queue: Queue<Signal>,
+    send_queue: Queue<(T, Option<Signal>)>,
     closed: bool,
     cap: Option<usize>,
     next_id: usize,
@@ -285,8 +285,8 @@ impl<T> SharedState<T> {
     fn new(cap: Option<usize>) -> Self {
         let pending_sends = cap.map_or_else(Queue::new, Queue::with_capacity);
         Self {
-            pending_recvs: Queue::new(),
-            pending_sends,
+            recv_queue: Queue::new(),
+            send_queue: pending_sends,
             closed: false,
             cap,
             next_id: 1,
@@ -294,7 +294,7 @@ impl<T> SharedState<T> {
     }
 
     fn len(&self) -> usize {
-        let len = self.pending_sends.len();
+        let len = self.send_queue.len();
         self.cap.map_or(len, |cap| cap.min(len))
     }
 
@@ -314,10 +314,10 @@ impl<T> SharedState<T> {
 
     fn close(&mut self) {
         self.closed = true;
-        for (_, s) in self.pending_recvs.iter() {
+        for (_, s) in self.recv_queue.iter() {
             s.wake_by_ref();
         }
-        for (_, (_, s)) in self.pending_sends.iter() {
+        for (_, (_, s)) in self.send_queue.iter() {
             if let Some(s) = s {
                 s.wake_by_ref();
             }
@@ -344,7 +344,7 @@ impl<T> Future for SendFuture<T> {
             None => {
                 let mut guard = self.shared_state.lock();
                 if guard.closed {
-                    if let Some((_, (m, Some(_)))) = guard.pending_sends.dequeue() {
+                    if let Some((_, (m, Some(_)))) = guard.send_queue.dequeue() {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
@@ -357,25 +357,25 @@ impl<T> Future for SendFuture<T> {
         }
         let id = guard.get_next_id();
         if !guard.is_full() {
-            guard.pending_sends.enqueue(id, (m, None));
-            if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.send_queue.enqueue(id, (m, None));
+            if let Some((_, s)) = guard.recv_queue.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Poll::Ready(Ok(()));
         }
         if guard.is_empty() {
-            if let Some((_, s)) = guard.pending_recvs.dequeue() {
-                guard.pending_sends.enqueue(id, (m, None));
+            if let Some((_, s)) = guard.recv_queue.dequeue() {
+                guard.send_queue.enqueue(id, (m, None));
                 drop(guard);
                 s.wake();
                 return Poll::Ready(Ok(()));
             }
         }
         guard
-            .pending_sends
+            .send_queue
             .enqueue(id, (m, Some(cx.waker().clone().into())));
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
+        if let Some((_, s)) = guard.recv_queue.dequeue() {
             drop(guard);
             s.wake();
         }
@@ -398,17 +398,16 @@ impl<T> Future for RecvFuture<T> {
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut guard = self.shared_state.lock();
-        if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+        if let Some((_, (m, s))) = guard.send_queue.dequeue() {
             if let Some(s) = s {
+                drop(guard);
                 s.wake();
-            }
-            if let Some(cap) = guard.cap {
-                if cap > 0 {
-                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
-                        if let Some(s) = s.take() {
-                            drop(guard);
-                            s.wake();
-                        }
+                return Poll::Ready(Ok(m));
+            } else if let Some(cap) = guard.cap.filter(|&cap| cap > 0) {
+                if let Some((_, (_, s))) = guard.send_queue.get_mut(cap - 1) {
+                    if let Some(s) = s.take() {
+                        drop(guard);
+                        s.wake();
                     }
                 }
             }
@@ -417,10 +416,8 @@ impl<T> Future for RecvFuture<T> {
         if guard.closed {
             return Poll::Ready(Err(RecvError::Disconnected));
         }
-        if !guard.pending_recvs.contains(self.id) {
-            guard
-                .pending_recvs
-                .enqueue(self.id, cx.waker().clone().into());
+        if !guard.recv_queue.contains(self.id) {
+            guard.recv_queue.enqueue(self.id, cx.waker().clone().into());
         }
         Poll::Pending
     }
@@ -429,7 +426,7 @@ impl<T> Future for RecvFuture<T> {
 impl<T> Drop for RecvFuture<T> {
     fn drop(&mut self) {
         let mut guard = self.shared_state.lock();
-        guard.pending_recvs.remove(self.id);
+        guard.recv_queue.remove(self.id);
     }
 }
 
@@ -487,8 +484,8 @@ impl<T> Sender<T> {
         }
         let id = self.get_next_id();
         if Some(0) == guard.cap {
-            if let Some((_, s)) = guard.pending_recvs.dequeue() {
-                guard.pending_sends.enqueue(id, (m, None));
+            if let Some((_, s)) = guard.recv_queue.dequeue() {
+                guard.send_queue.enqueue(id, (m, None));
                 drop(guard);
                 s.wake();
                 return Ok(());
@@ -497,8 +494,8 @@ impl<T> Sender<T> {
         if guard.is_full() {
             return Err(TrySendError::Full(m));
         }
-        guard.pending_sends.enqueue(id, (m, None));
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
+        guard.send_queue.enqueue(id, (m, None));
+        if let Some((_, s)) = guard.recv_queue.dequeue() {
             drop(guard);
             s.wake();
         }
@@ -526,16 +523,16 @@ impl<T> Sender<T> {
         }
         let id = self.get_next_id();
         if !guard.is_full() {
-            guard.pending_sends.enqueue(id, (m, None));
-            if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.send_queue.enqueue(id, (m, None));
+            if let Some((_, s)) = guard.recv_queue.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Ok(());
         }
         if guard.is_empty() {
-            if let Some((_, s)) = guard.pending_recvs.dequeue() {
-                guard.pending_sends.enqueue(id, (m, None));
+            if let Some((_, s)) = guard.recv_queue.dequeue() {
+                guard.send_queue.enqueue(id, (m, None));
                 drop(guard);
                 s.wake();
                 return Ok(());
@@ -543,13 +540,13 @@ impl<T> Sender<T> {
         }
         let sync_signal = SyncSignal::new();
         guard
-            .pending_sends
+            .send_queue
             .enqueue(id, (m, Some(sync_signal.clone().into())));
         drop(guard);
         sync_signal.wait();
         let mut guard = self.shared_state.lock();
         if guard.closed {
-            if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
+            if let Some((_, (m, Some(_)))) = guard.send_queue.remove(id) {
                 return Err(SendError(m));
             }
         }
@@ -568,19 +565,19 @@ impl<T> Sender<T> {
         }
         let id = self.get_next_id();
         if !guard.is_full() {
-            guard.pending_sends.enqueue(id, (m, None));
-            if let Some((_, s)) = guard.pending_recvs.dequeue() {
+            guard.send_queue.enqueue(id, (m, None));
+            if let Some((_, s)) = guard.recv_queue.dequeue() {
                 drop(guard);
                 s.wake();
             }
             return Ok(());
         }
         let sync_signal = SyncSignal::new();
-        guard.pending_sends.enqueue(id, (m, None));
+        guard.send_queue.enqueue(id, (m, None));
         drop(guard);
         let _ = sync_signal.wait_timeout(timeout);
         let mut guard = self.shared_state.lock();
-        if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
+        if let Some((_, (m, _))) = guard.send_queue.remove(id) {
             if guard.closed {
                 return Err(SendTimeoutError::Disconnected(m));
             }
@@ -700,17 +697,16 @@ impl<T> Receiver<T> {
     /// or all senders have been dropped.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         let mut guard = self.shared_state.lock();
-        if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+        if let Some((_, (m, s))) = guard.send_queue.dequeue() {
             if let Some(s) = s {
+                drop(guard);
                 s.wake();
-            }
-            if let Some(cap) = guard.cap {
-                if cap > 0 {
-                    if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
-                        if let Some(s) = s.take() {
-                            drop(guard);
-                            s.wake();
-                        }
+                return Ok(m);
+            } else if let Some(cap) = guard.cap.filter(|&cap| cap > 0) {
+                if let Some((_, (_, s))) = guard.send_queue.get_mut(cap - 1) {
+                    if let Some(s) = s.take() {
+                        drop(guard);
+                        s.wake();
                     }
                 }
             }
@@ -739,17 +735,16 @@ impl<T> Receiver<T> {
     pub fn recv(&self) -> Result<T, RecvError> {
         loop {
             let mut guard = self.shared_state.lock();
-            if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+            if let Some((_, (m, s))) = guard.send_queue.dequeue() {
                 if let Some(s) = s {
+                    drop(guard);
                     s.wake();
-                }
-                if let Some(cap) = guard.cap {
-                    if cap > 0 {
-                        if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
-                            if let Some(s) = s.take() {
-                                drop(guard);
-                                s.wake();
-                            }
+                    return Ok(m);
+                } else if let Some(cap) = guard.cap.filter(|&cap| cap > 0) {
+                    if let Some((_, (_, s))) = guard.send_queue.get_mut(cap - 1) {
+                        if let Some(s) = s.take() {
+                            drop(guard);
+                            s.wake();
                         }
                     }
                 }
@@ -760,7 +755,7 @@ impl<T> Receiver<T> {
             }
             let id = self.get_next_id();
             let sync_signal = SyncSignal::new();
-            guard.pending_recvs.enqueue(id, sync_signal.clone().into());
+            guard.recv_queue.enqueue(id, sync_signal.clone().into());
             drop(guard);
             sync_signal.wait();
         }
@@ -773,17 +768,16 @@ impl<T> Receiver<T> {
         let mut timeout_remaining = timeout;
         loop {
             let mut guard = self.shared_state.lock();
-            if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
+            if let Some((_, (m, s))) = guard.send_queue.dequeue() {
                 if let Some(s) = s {
+                    drop(guard);
                     s.wake();
-                }
-                if let Some(cap) = guard.cap {
-                    if cap > 0 {
-                        if let Some((_, (_, s))) = guard.pending_sends.get_mut(cap - 1) {
-                            if let Some(s) = s.take() {
-                                drop(guard);
-                                s.wake();
-                            }
+                    return Ok(m);
+                } else if let Some(cap) = guard.cap.filter(|&cap| cap > 0) {
+                    if let Some((_, (_, s))) = guard.send_queue.get_mut(cap - 1) {
+                        if let Some(s) = s.take() {
+                            drop(guard);
+                            s.wake();
                         }
                     }
                 }
@@ -794,7 +788,7 @@ impl<T> Receiver<T> {
             }
             let id = self.get_next_id();
             let sync_signal = SyncSignal::new();
-            guard.pending_recvs.enqueue(id, sync_signal.clone().into());
+            guard.recv_queue.enqueue(id, sync_signal.clone().into());
             drop(guard);
             let _ = sync_signal.wait_timeout(timeout_remaining);
             let elapsed = start_time.elapsed();

@@ -1,4 +1,4 @@
-pub use {std::sync::MutexGuard, StdMutex as Mutex};
+pub use StdMutex as Mutex;
 
 #[derive(Debug)]
 pub struct StdMutex<T>(std::sync::Mutex<T>);
