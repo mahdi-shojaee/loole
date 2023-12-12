@@ -3,6 +3,8 @@ pub use StdMutex as Mutex;
 #[derive(Debug)]
 pub struct StdMutex<T>(std::sync::Mutex<T>);
 
+pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
+
 impl<T> StdMutex<T> {
     #[inline(always)]
     pub fn new(t: T) -> Self {
@@ -10,7 +12,7 @@ impl<T> StdMutex<T> {
     }
 
     #[inline(always)]
-    pub fn lock(&self) -> std::sync::MutexGuard<T> {
+    pub fn lock(&self) -> MutexGuard<T> {
         self.0.lock().map_or_else(|e| e.into_inner(), |v| v)
     }
 }

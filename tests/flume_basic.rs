@@ -45,33 +45,33 @@ fn iter_threaded() {
     assert_eq!(rx.iter().sum::<u32>(), (0..1000).sum());
 }
 
-// #[cfg_attr(any(target_os = "macos", windows), ignore)] // FIXME #41
-// #[test]
-// fn send_timeout() {
-//     let dur = Duration::from_millis(350);
-//     let max_error = Duration::from_millis(5);
-//     let dur_min = dur.checked_sub(max_error).unwrap();
-//     let dur_max = dur.checked_add(max_error).unwrap();
+#[cfg_attr(any(target_os = "macos", windows), ignore)] // FIXME #41
+#[test]
+fn send_timeout() {
+    let dur = Duration::from_millis(350);
+    let max_error = Duration::from_millis(5);
+    let dur_min = dur.checked_sub(max_error).unwrap();
+    let dur_max = dur.checked_add(max_error).unwrap();
 
-//     let (tx, rx) = bounded(1);
+    let (tx, rx) = bounded(1);
 
-//     assert!(tx.send_timeout(42, dur).is_ok());
+    assert!(tx.send_timeout(42, dur).is_ok());
 
-//     let then = Instant::now();
-//     assert!(tx.send_timeout(43, dur).is_err());
-//     let now = Instant::now();
+    let then = Instant::now();
+    assert!(tx.send_timeout(43, dur).is_err());
+    let now = Instant::now();
 
-//     let this = now.duration_since(then);
-//     if !(dur_min < this && this < dur_max) {
-//         panic!("timeout exceeded: {:?}", this);
-//     }
+    let this = now.duration_since(then);
+    if !(dur_min < this && this < dur_max) {
+        panic!("timeout exceeded: {:?}", this);
+    }
 
-//     assert_eq!(rx.drain().count(), 1);
+    assert_eq!(rx.drain().count(), 1);
 
-//     drop(rx);
+    drop(rx);
 
-//     assert!(tx.send_timeout(42, Duration::from_millis(350)).is_err());
-// }
+    assert!(tx.send_timeout(42, Duration::from_millis(350)).is_err());
+}
 
 #[cfg_attr(any(target_os = "macos", windows), ignore)] // FIXME #41
 #[test]
@@ -144,31 +144,31 @@ fn disconnect_rx() {
     assert!(tx.send(0).is_err());
 }
 
-// #[test]
-// fn drain() {
-//     let (tx, rx) = unbounded();
+#[test]
+fn drain() {
+    let (tx, rx) = unbounded();
 
-//     for i in 0..100 {
-//         tx.send(i).unwrap();
-//     }
+    for i in 0..100 {
+        tx.send(i).unwrap();
+    }
 
-//     assert_eq!(rx.drain().sum::<u32>(), (0..100).sum());
+    assert_eq!(rx.drain().sum::<u32>(), (0..100).sum());
 
-//     for i in 0..100 {
-//         tx.send(i).unwrap();
-//     }
+    for i in 0..100 {
+        tx.send(i).unwrap();
+    }
 
-//     for i in 0..100 {
-//         tx.send(i).unwrap();
-//     }
+    for i in 0..100 {
+        tx.send(i).unwrap();
+    }
 
-//     rx.recv().unwrap();
+    rx.recv().unwrap();
 
-//     (1u32..100)
-//         .chain(0..100)
-//         .zip(rx)
-//         .for_each(|(l, r)| assert_eq!(l, r));
-// }
+    (1u32..100)
+        .chain(0..100)
+        .zip(rx)
+        .for_each(|(l, r)| assert_eq!(l, r));
+}
 
 #[test]
 fn try_send() {
@@ -190,42 +190,42 @@ fn try_send() {
     assert!(tx.try_send(42).is_err());
 }
 
-// #[test]
-// fn send_bounded() {
-//     let (tx, rx) = bounded(5);
+#[test]
+fn send_bounded() {
+    let (tx, rx) = bounded(5);
 
-//     for _ in 0..5 {
-//         tx.send(42).unwrap();
-//     }
+    for _ in 0..5 {
+        tx.send(42).unwrap();
+    }
 
-//     let _ = rx.recv().unwrap();
+    let _ = rx.recv().unwrap();
 
-//     tx.send(42).unwrap();
+    tx.send(42).unwrap();
 
-//     assert!(tx.try_send(42).is_err());
+    assert!(tx.try_send(42).is_err());
 
-//     rx.drain();
+    rx.drain();
 
-//     let mut ts = Vec::new();
-//     for _ in 0..100 {
-//         let tx = tx.clone();
-//         ts.push(std::thread::spawn(move || {
-//             for i in 0..10000 {
-//                 tx.send(i).unwrap();
-//             }
-//         }));
-//     }
+    let mut ts = Vec::new();
+    for _ in 0..100 {
+        let tx = tx.clone();
+        ts.push(std::thread::spawn(move || {
+            for i in 0..10000 {
+                tx.send(i).unwrap();
+            }
+        }));
+    }
 
-//     drop(tx);
+    drop(tx);
 
-//     assert_eq!(rx.iter().sum::<u64>(), (0..10000).sum::<u64>() * 100);
+    assert_eq!(rx.iter().sum::<u64>(), (0..10000).sum::<u64>() * 100);
 
-//     for t in ts {
-//         t.join().unwrap();
-//     }
+    for t in ts {
+        t.join().unwrap();
+    }
 
-//     assert!(rx.recv().is_err());
-// }
+    assert!(rx.recv().is_err());
+}
 
 #[test]
 fn rendezvous() {

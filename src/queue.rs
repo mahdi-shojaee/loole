@@ -27,15 +27,11 @@ impl<T> Queue<T> {
     }
 
     pub fn contains(&self, id: usize) -> bool {
-        self.inner.iter().any(|(i, _)| *i == id)
+        self.inner.iter().any(|&(i, _)| i == id)
     }
 
     pub fn remove(&mut self, id: usize) -> Option<(usize, T)> {
         self.inner.remove(self.index_by_id(id)?)
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut (usize, T)> {
-        self.inner.get_mut(index)
     }
 
     pub fn len(&self) -> usize {

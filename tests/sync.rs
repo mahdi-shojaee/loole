@@ -94,16 +94,14 @@ fn sync_shift_pending_send_buffer_0() {
             let start = Instant::now();
             assert_eq!(tx.send(1), Ok(()));
             let elapsed = start.elapsed();
-            assert!(elapsed >= ms(900));
-            assert!(elapsed < ms(1100));
+            assert!(ms(900) <= elapsed && elapsed <= ms(1100));
         });
         scope.spawn(move || {
             let start = Instant::now();
             thread::sleep(ms(100));
             assert_eq!(tx_clone.send(2), Ok(()));
             let elapsed = start.elapsed();
-            assert!(elapsed >= ms(1900));
-            assert!(elapsed < ms(2100));
+            assert!(ms(1900) <= elapsed && elapsed <= ms(2100));
         });
         scope.spawn(move || {
             thread::sleep(ms(1000));
@@ -124,16 +122,45 @@ fn sync_shift_pending_send_buffer_2() {
             let start = Instant::now();
             assert_eq!(tx.send(3), Ok(()));
             let elapsed = start.elapsed();
-            assert!(
-                elapsed >= ms(900),
-                "sent too early, elapsed {:.2?}",
-                elapsed
-            );
-            assert!(elapsed < ms(1100), "sent too late, elapsed {:.2?}", elapsed);
+            assert!(ms(900) <= elapsed && elapsed <= ms(1100));
         });
         scope.spawn(move || {
             thread::sleep(ms(1000));
             assert_eq!(rx.recv(), Ok(1));
+        });
+    });
+}
+
+#[test]
+fn sync_drain() {
+    let (tx, rx) = bounded(2);
+    let tx_clone_1 = tx.clone();
+    let tx_clone_2 = tx.clone();
+    scope(|scope| {
+        scope.spawn(move || {
+            assert_eq!(tx.send(1), Ok(()));
+            assert_eq!(tx.send(2), Ok(()));
+        });
+        scope.spawn(move || {
+            let start = Instant::now();
+            thread::sleep(ms(100));
+            assert_eq!(tx_clone_1.send(3), Ok(()));
+            let elapsed = start.elapsed();
+            assert!(ms(900) <= elapsed && elapsed <= ms(1100));
+        });
+        scope.spawn(move || {
+            let start = Instant::now();
+            thread::sleep(ms(100));
+            assert_eq!(tx_clone_2.send(4), Ok(()));
+            let elapsed = start.elapsed();
+            assert!(ms(900) <= elapsed && elapsed <= ms(1100));
+        });
+        scope.spawn(move || {
+            thread::sleep(ms(1000));
+            assert_eq!(rx.len(), 2);
+            let v = rx.drain().collect::<Vec<_>>();
+            assert_eq!(v, [1, 2]);
+            assert_eq!(rx.len(), 2);
         });
     });
 }
