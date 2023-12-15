@@ -346,8 +346,7 @@ fn try_send<T>(m: T, id: usize, mut guard: MutexGuard<'_, SharedState<T>>) -> Tr
             s.wake();
         }
         return TrySendResult::Ok;
-    }
-    if guard.cap == Some(0) {
+    } else if guard.cap == Some(0) {
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
             guard.pending_sends.enqueue(id, (m, None));
             drop(guard);
@@ -375,8 +374,7 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<T> {
             }
         }
         return TryRecvResult::Ok(m);
-    }
-    if guard.cap == Some(0) {
+    } else if guard.cap == Some(0) {
         if let Some((_, (m, s))) = guard.pending_sends.dequeue() {
             if let Some(s) = s {
                 drop(guard);

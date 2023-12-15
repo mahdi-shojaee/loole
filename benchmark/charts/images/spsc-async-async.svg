@@ -1,12 +1,10 @@
 <svg width="700" height="220" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" baseProfile="full" viewBox="0 0 700 220">
 <rect width="700" height="220" x="0" y="0" id="0" fill="white"></rect>
 <path d="M96.5 156.5L672 156.5" fill="none" stroke="#E0E6F1"></path>
-<path d="M96.5 140.5L672 140.5" fill="none" stroke="#E0E6F1"></path>
-<path d="M96.5 124.5L672 124.5" fill="none" stroke="#E0E6F1"></path>
-<path d="M96.5 108.5L672 108.5" fill="none" stroke="#E0E6F1"></path>
-<path d="M96.5 92.5L672 92.5" fill="none" stroke="#E0E6F1"></path>
-<path d="M96.5 76.5L672 76.5" fill="none" stroke="#E0E6F1"></path>
-<path d="M96.5 60.5L672 60.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M96.5 133.5L672 133.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M96.5 111.5L672 111.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M96.5 89.5L672 89.5" fill="none" stroke="#E0E6F1"></path>
+<path d="M96.5 66.5L672 66.5" fill="none" stroke="#E0E6F1"></path>
 <path d="M96.5 44.5L672 44.5" fill="none" stroke="#E0E6F1"></path>
 <path d="M96.5 156.5L672 156.5" fill="none" stroke="#6E7079" stroke-linecap="round"></path>
 <path d="M96.5 156L96.5 161" fill="none" stroke="#6E7079"></path>
@@ -15,37 +13,35 @@
 <path d="M528.5 156L528.5 161" fill="none" stroke="#6E7079"></path>
 <path d="M672.5 156L672.5 161" fill="none" stroke="#6E7079"></path>
 <text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 156)" fill="#6E7079">0</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 140)" fill="#6E7079">5,000,000</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 124)" fill="#6E7079">10,000,000</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 108)" fill="#6E7079">15,000,000</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 92)" fill="#6E7079">20,000,000</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 76)" fill="#6E7079">25,000,000</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 60)" fill="#6E7079">30,000,000</text>
-<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 44)" fill="#6E7079">35,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 133.6)" fill="#6E7079">5,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 111.2)" fill="#6E7079">10,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 88.8)" fill="#6E7079">15,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 66.4)" fill="#6E7079">20,000,000</text>
+<text dominant-baseline="central" text-anchor="end" style="font-size:12px;font-family:sans-serif;" transform="translate(88.48 44)" fill="#6E7079">25,000,000</text>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(168.42 164)" fill="#6E7079">bounded(0)</text>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(312.3 164)" fill="#6E7079">bounded(1)</text>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(456.18 164)" fill="#6E7079">bounded(50)</text>
 <text dominant-baseline="central" text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="6" transform="translate(600.06 164)" fill="#6E7079">bounded(100)</text>
-<path d="M107.3 156l17.5 0l0 -18.4l-17.5 0Z" fill="#5470c6"></path>
-<path d="M251.2 156l17.5 0l0 -18l-17.5 0Z" fill="#5470c6"></path>
-<path d="M395 156l17.5 0l0 -22.4l-17.5 0Z" fill="#5470c6"></path>
-<path d="M538.9 156l17.5 0l0 -14.1l-17.5 0Z" fill="#5470c6"></path>
-<path d="M128.2 156l17.5 0l0 -13.4l-17.5 0Z" fill="#91cc75"></path>
-<path d="M272.1 156l17.5 0l0 -13.3l-17.5 0Z" fill="#91cc75"></path>
-<path d="M416 156l17.5 0l0 -14.4l-17.5 0Z" fill="#91cc75"></path>
-<path d="M559.9 156l17.5 0l0 -15.8l-17.5 0Z" fill="#91cc75"></path>
+<path d="M107.3 156l17.5 0l0 -23.3l-17.5 0Z" fill="#5470c6"></path>
+<path d="M251.2 156l17.5 0l0 -24.6l-17.5 0Z" fill="#5470c6"></path>
+<path d="M395 156l17.5 0l0 -32.8l-17.5 0Z" fill="#5470c6"></path>
+<path d="M538.9 156l17.5 0l0 -20.5l-17.5 0Z" fill="#5470c6"></path>
+<path d="M128.2 156l17.5 0l0 -18.4l-17.5 0Z" fill="#91cc75"></path>
+<path d="M272.1 156l17.5 0l0 -18.2l-17.5 0Z" fill="#91cc75"></path>
+<path d="M416 156l17.5 0l0 -21.6l-17.5 0Z" fill="#91cc75"></path>
+<path d="M559.9 156l17.5 0l0 -21.3l-17.5 0Z" fill="#91cc75"></path>
 <path d="M149.2 156l17.5 0l0 0l-17.5 0Z" fill="#fac858"></path>
-<path d="M293.1 156l17.5 0l0 -6.7l-17.5 0Z" fill="#fac858"></path>
-<path d="M437 156l17.5 0l0 -37.7l-17.5 0Z" fill="#fac858"></path>
-<path d="M580.8 156l17.5 0l0 -32.6l-17.5 0Z" fill="#fac858"></path>
+<path d="M293.1 156l17.5 0l0 -9.1l-17.5 0Z" fill="#fac858"></path>
+<path d="M437 156l17.5 0l0 -52.1l-17.5 0Z" fill="#fac858"></path>
+<path d="M580.8 156l17.5 0l0 -40.8l-17.5 0Z" fill="#fac858"></path>
 <path d="M170.2 156l17.5 0l0 0l-17.5 0Z" fill="#ee6666"></path>
-<path d="M314 156l17.5 0l0 -9.9l-17.5 0Z" fill="#ee6666"></path>
-<path d="M457.9 156l17.5 0l0 -33.8l-17.5 0Z" fill="#ee6666"></path>
-<path d="M601.8 156l17.5 0l0 -28.9l-17.5 0Z" fill="#ee6666"></path>
-<path d="M191.1 156l17.5 0l0 -28.7l-17.5 0Z" fill="#73c0de"></path>
-<path d="M335 156l17.5 0l0 -33.8l-17.5 0Z" fill="#73c0de"></path>
-<path d="M478.9 156l17.5 0l0 -87.1l-17.5 0Z" fill="#73c0de"></path>
-<path d="M622.8 156l17.5 0l0 -96.2l-17.5 0Z" fill="#73c0de"></path>
+<path d="M314 156l17.5 0l0 -13.5l-17.5 0Z" fill="#ee6666"></path>
+<path d="M457.9 156l17.5 0l0 -47.2l-17.5 0Z" fill="#ee6666"></path>
+<path d="M601.8 156l17.5 0l0 -38.4l-17.5 0Z" fill="#ee6666"></path>
+<path d="M191.1 156l17.5 0l0 -37.7l-17.5 0Z" fill="#73c0de"></path>
+<path d="M335 156l17.5 0l0 -44.5l-17.5 0Z" fill="#73c0de"></path>
+<path d="M478.9 156l17.5 0l0 -97.4l-17.5 0Z" fill="#73c0de"></path>
+<path d="M622.8 156l17.5 0l0 -73.3l-17.5 0Z" fill="#73c0de"></path>
 <path d="M212.1 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>
 <path d="M356 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>
 <path d="M499.9 156l17.5 0l0 0l-17.5 0Z" fill="#3ba272"></path>

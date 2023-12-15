@@ -18,10 +18,12 @@ impl<T> Queue<T> {
         }
     }
 
+    #[inline(always)]
     pub fn enqueue(&mut self, id: usize, value: T) {
         self.inner.push_back((id, value));
     }
 
+    #[inline(always)]
     pub fn dequeue(&mut self) -> Option<(usize, T)> {
         self.inner.pop_front()
     }
@@ -34,10 +36,12 @@ impl<T> Queue<T> {
         self.inner.remove(self.index_by_id(id)?)
     }
 
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
+    #[inline(always)]
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
             inner: self.inner.iter(),
@@ -66,6 +70,7 @@ pub struct Iter<'a, T> {
 impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a (usize, T);
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
     }
