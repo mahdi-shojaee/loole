@@ -19,6 +19,8 @@
 //! When all [`Sender`]s or all [`Receiver`]s are dropped, the channel becomes closed. This means that no
 //! more messages can be sent, but remaining messages can still be received.
 //!
+//! The channel can also be closed manually by calling Sender::close() or Receiver::close().
+//!
 //! # Examples
 //!
 //! ```
@@ -315,7 +317,8 @@ impl<T> SharedState<T> {
         id
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> bool {
+        let was_closed = self.closed;
         self.closed = true;
         for (_, s) in self.pending_recvs.iter() {
             s.wake_by_ref();
@@ -325,6 +328,11 @@ impl<T> SharedState<T> {
                 s.wake_by_ref();
             }
         }
+        !was_closed
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed
     }
 }
 
@@ -625,6 +633,20 @@ impl<T> Sender<T> {
     pub fn is_full(&self) -> bool {
         self.shared_state.lock().is_full()
     }
+
+    /// Closes the channel.
+    ///
+    /// Returns true only if this call actively closed the channel, which was previously open.
+    ///
+    /// The remaining messages can still be received.
+    pub fn close(&self) -> bool {
+        self.shared_state.lock().close()
+    }
+
+    /// Returns true if the channel is closed.
+    pub fn is_closed(&self) -> bool {
+        self.shared_state.lock().is_closed()
+    }
 }
 
 impl<T> Drop for Sender<T> {
@@ -835,6 +857,20 @@ impl<T> Receiver<T> {
     /// Note: Zero-capacity channels are always full.
     pub fn is_full(&self) -> bool {
         self.shared_state.lock().is_full()
+    }
+
+    /// Closes the channel.
+    ///
+    /// Returns true only if this call actively closed the channel, which was previously open.
+    ///
+    /// The remaining messages can still be received.
+    pub fn close(&self) -> bool {
+        self.shared_state.lock().close()
+    }
+
+    /// Returns true if the channel is closed.
+    pub fn is_closed(&self) -> bool {
+        self.shared_state.lock().is_closed()
     }
 }
 

@@ -53,6 +53,24 @@ async fn async_recv_before_send_buffer_1() {
 }
 
 #[tokio::test]
+async fn async_recv_after_manually_closed_sender() {
+    let (tx, rx) = bounded(1);
+    assert_eq!(tx.send_async(1).await, Ok(()));
+    assert!(tx.close());
+    assert_eq!(rx.recv_async().await, Ok(1));
+    assert_eq!(rx.recv_async().await, Err(RecvError::Disconnected));
+}
+
+#[tokio::test]
+async fn async_recv_after_manually_closeed_receiver() {
+    let (tx, rx) = bounded(1);
+    assert_eq!(tx.send_async(1).await, Ok(()));
+    assert!(rx.close());
+    assert_eq!(rx.recv_async().await, Ok(1));
+    assert_eq!(rx.recv_async().await, Err(RecvError::Disconnected));
+}
+
+#[tokio::test]
 async fn async_2_sends_before_2_recvs_buffer_1() {
     let (tx, rx) = bounded(1);
     assert_eq!(tx.capacity(), Some(1));

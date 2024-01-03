@@ -1,7 +1,7 @@
 use std::thread::{self, scope};
 use std::time::{Duration, Instant};
 
-use loole::{bounded, SendError};
+use loole::{bounded, RecvError, SendError};
 
 fn ms(ms: u64) -> Duration {
     Duration::from_millis(ms)
@@ -43,6 +43,40 @@ fn sync_recv_before_send_buffer_1() {
     sync_sleep(100);
     assert_eq!(tx.send(1), Ok(()));
     assert_eq!(h.join().unwrap(), Ok(1));
+}
+
+#[test]
+fn sync_recv_after_manually_closed_sender() {
+    let (tx, rx) = bounded(1);
+    assert_eq!(tx.send(1), Ok(()));
+    assert!(tx.close());
+    assert_eq!(rx.recv(), Ok(1));
+    assert_eq!(rx.recv(), Err(RecvError::Disconnected));
+}
+
+#[test]
+fn sync_recv_after_manually_closeed_receiver() {
+    let (tx, rx) = bounded(1);
+    assert_eq!(tx.send(1), Ok(()));
+    assert!(rx.close());
+    assert_eq!(rx.recv(), Ok(1));
+    assert_eq!(rx.recv(), Err(RecvError::Disconnected));
+}
+
+#[test]
+fn sync_is_closed_closed_by_sender_drop() {
+    let (tx, rx) = bounded::<()>(1);
+    assert!(!rx.is_closed());
+    drop(tx);
+    assert!(rx.is_closed());
+}
+
+#[test]
+fn sync_is_closed_closed_by_receiver_drop() {
+    let (tx, rx) = bounded::<()>(1);
+    assert!(!tx.is_closed());
+    drop(rx);
+    assert!(tx.is_closed());
 }
 
 #[test]
