@@ -402,7 +402,20 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<T> {
 #[derive(Debug)]
 pub struct SendFuture<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
-    msg: Option<T>,
+    msg: MessageOrId<T>,
+}
+
+#[derive(Debug)]
+enum MessageOrId<T> {
+    Message(T),
+    Id(usize),
+    Invalid,
+}
+
+impl<T> MessageOrId<T> {
+    fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::Invalid)
+    }
 }
 
 impl<T> std::marker::Unpin for SendFuture<T> {}
@@ -412,16 +425,17 @@ impl<T> Future for SendFuture<T> {
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let m = match self.msg.take() {
-            Some(m) => m,
-            None => {
+            MessageOrId::Message(m) => m,
+            MessageOrId::Id(id) => {
                 let mut guard = self.shared_state.lock();
                 if guard.closed {
-                    if let Some((_, (m, Some(_)))) = guard.pending_sends.dequeue() {
+                    if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
                 return Poll::Ready(Ok(()));
             }
+            MessageOrId::Invalid => panic!("Future polled after completion"),
         };
         let mut guard = self.shared_state.lock();
         let id = guard.get_next_id();
@@ -433,10 +447,12 @@ impl<T> Future for SendFuture<T> {
         guard
             .pending_sends
             .enqueue(id, (m, Some(cx.waker().clone().into())));
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            drop(guard);
+        let opt = guard.pending_recvs.dequeue();
+        drop(guard);
+        if let Some((_, s)) = opt {
             s.wake();
         }
+        self.msg = MessageOrId::Id(id);
         Poll::Pending
     }
 }
@@ -542,7 +558,7 @@ impl<T> Sender<T> {
     pub fn send_async(&self, m: T) -> SendFuture<T> {
         SendFuture {
             shared_state: Arc::clone(&self.shared_state),
-            msg: Some(m),
+            msg: MessageOrId::Message(m),
         }
     }
 

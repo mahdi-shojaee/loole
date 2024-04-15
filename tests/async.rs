@@ -1,4 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::Context,
+    time::{Duration, Instant},
+};
 
 use futures::{future::join_all, FutureExt};
 use loole::{bounded, RecvError, SendError};
@@ -9,6 +14,31 @@ fn ms(ms: u64) -> Duration {
 
 async fn async_sleep(ms: u64) {
     tokio::time::sleep(Duration::from_millis(ms)).await
+}
+
+#[test]
+fn ordered_deques() {
+    let (tx, rx) = bounded(0);
+
+    let mut send_future_1 = tx.send_async(1);
+    let mut send_future_2 = tx.send_async(2);
+
+    let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+    let cx = &mut cx;
+
+    assert!(Pin::new(&mut send_future_1).poll(cx).is_pending());
+    assert!(Pin::new(&mut send_future_2).poll(cx).is_pending());
+
+    drop(rx);
+
+    assert_eq!(
+        Pin::new(&mut send_future_2).poll(cx),
+        std::task::Poll::Ready(Err(SendError(2)))
+    );
+    assert_eq!(
+        Pin::new(&mut send_future_1).poll(cx),
+        std::task::Poll::Ready(Err(SendError(1)))
+    );
 }
 
 #[tokio::test]
