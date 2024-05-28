@@ -33,7 +33,7 @@ Producers can send and consumers can receive messages asynchronously or synchron
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.3.0"
+loole = "0.3.1"
 ```
 
 ## Run Benchmarks
