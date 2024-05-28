@@ -793,6 +793,9 @@ impl<T> Receiver<T> {
             let _ = sync_signal.wait_timeout(timeout_remaining);
             let elapsed = start_time.elapsed();
             if elapsed >= timeout {
+                let mut guard = self.shared_state.lock();
+                guard.pending_recvs.remove(id);
+                drop(guard);
                 return Err(RecvTimeoutError::Timeout);
             }
             timeout_remaining = timeout - elapsed;
