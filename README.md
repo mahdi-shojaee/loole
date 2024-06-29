@@ -26,7 +26,14 @@ fn main() {
 }
 ```
 
-Producers can send and consumers can receive messages asynchronously or synchronously.
+## Why Loole?
+
+* Fast: Excels in high-contention environments with many concurrent producers and consumers. (Benchmark results available below)
+* Featureful: Unbounded, bounded and rendezvous channels
+* Safe: No unsafe code: `#![forbid(unsafe_code)]`!
+* Capable: Send and receive operations can be blocking (sync) or non-blocking (async)
+* Familiar: Compatible with the Flume's API
+* Simple: No dependencies, fast to compile
 
 ## Usage
 
