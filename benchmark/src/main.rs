@@ -1,6 +1,10 @@
 #![allow(dead_code, unused_imports, unused_variables)]
 
-use std::io::prelude::*;
+const MESSAGES_NO: usize = 1_000_000;
+const MESSAGE_SIZE: usize = 256;
+const MAX_SENDERS: usize = 5000;
+const MAX_RECEIVERS: usize = 10;
+
 use std::io::prelude::*;
 use std::path::Path;
 use std::process::Stdio;

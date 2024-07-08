@@ -4,10 +4,8 @@ use crate::{
     async_channel_bench,
     bench_utils::{BenchError, BenchResult},
     crossbeam_channel_bench, flume_bench, kanal_bench, loole_bench, message_type, tokio_bench,
+    MESSAGES_NO, MESSAGE_SIZE,
 };
-
-const MESSAGES_NO: usize = 1_000_000;
-const MESSAGE_SIZE: usize = 256;
 
 type MsgType = message_type::StackType<MESSAGE_SIZE>;
 

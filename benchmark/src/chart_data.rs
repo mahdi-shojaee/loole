@@ -7,6 +7,7 @@ use crate::{
         bench_async_async, bench_async_sync, bench_sync_async, bench_sync_sync, CrateName,
         BUFFER_SIZE_LIST,
     },
+    MAX_RECEIVERS, MAX_SENDERS,
 };
 use num_format::{Locale, ToFormattedString};
 
@@ -164,9 +165,9 @@ pub fn get_datasets(senders_no: usize, receivers_no: usize, rt: &Runtime) -> Dat
 
 pub fn get_bench_data(rt: &Runtime) -> BenchData {
     eprintln!("MPSC\n----");
-    let mpsc = get_datasets(5000, 1, rt);
+    let mpsc = get_datasets(MAX_SENDERS, 1, rt);
     eprintln!("MPMC\n----");
-    let mpmc = get_datasets(5000, 10, rt);
+    let mpmc = get_datasets(MAX_SENDERS, MAX_RECEIVERS, rt);
     eprintln!("SPSC\n----");
     let spsc = get_datasets(1, 1, rt);
     BenchData { mpsc, mpmc, spsc }
