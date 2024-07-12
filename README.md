@@ -2,6 +2,8 @@
 
 A safe async/sync multi-producer multi-consumer channel.
 
+"Loole" is a name inspired by the Farsi word "لوله" (pronounced loo-leh), which translates to "pipe" or "tube".
+
 ![Github Actions](https://github.com/mahdi-shojaee/loole/actions/workflows/rust.yml/badge.svg?branch=master)
 [![Documentation](https://docs.rs/loole/badge.svg)](https://docs.rs/loole)
 [![Cargo](https://img.shields.io/crates/v/loole.svg)](https://crates.io/crates/loole)
