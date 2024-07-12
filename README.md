@@ -100,8 +100,6 @@ Messages size: 264 bytes.
 
 ## License
 
-Loole is licensed under either of:
+This project is licensed under the [MIT license].
 
-- Apache License 2.0, (http://www.apache.org/licenses/LICENSE-2.0)
-
-- MIT license (http://opensource.org/licenses/MIT)
+[MIT license]: https://github.com/tokio-rs/tokio/blob/master/LICENSE
