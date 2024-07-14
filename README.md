@@ -104,4 +104,4 @@ Messages size: 264 bytes.
 
 This project is licensed under the [MIT license].
 
-[MIT license]: https://github.com/tokio-rs/tokio/blob/master/LICENSE
+[MIT license]: https://github.com/mahdi-shojaee/loole/blob/master/LICENSE
