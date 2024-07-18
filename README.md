@@ -5,7 +5,7 @@ A safe async/sync multi-producer multi-consumer channel.
 ![Github Actions](https://github.com/mahdi-shojaee/loole/actions/workflows/rust.yml/badge.svg?branch=master)
 [![Documentation](https://docs.rs/loole/badge.svg)](https://docs.rs/loole)
 [![Cargo](https://img.shields.io/crates/v/loole.svg)](https://crates.io/crates/loole)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/mahdi-shojaee/loole)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/mahdi-shojaee/loole)
 
 ```rust
 fn main() {
