@@ -91,13 +91,18 @@ where
     T: From<usize> + Send + 'static,
 {
     JoinHandle::Sync(thread::spawn(move || {
+        let mut error_count = 0;
+        let mut sent_count = 0;
         for k in 0..n {
             match send(&tx, k.into()) {
-                Ok(_) => (),
-                Err(_) => println!("error: channel closed at: {}", k),
+                Ok(_) => sent_count += 1,
+                Err(_) => error_count += 1,
             }
         }
-        n
+        if error_count > 0 {
+            println!("Sync sender encountered {} errors", error_count);
+        }
+        sent_count
     }))
 }
 
@@ -106,13 +111,18 @@ where
     T: From<usize> + Send + 'static,
 {
     JoinHandle::Async(tokio::spawn(async move {
+        let mut error_count = 0;
+        let mut sent_count = 0;
         for k in 0..n {
             match send_async(&tx, k.into()).await {
-                Ok(_) => (),
-                Err(_) => println!("error: channel closed at: {}", k),
+                Ok(_) => sent_count += 1,
+                Err(_) => error_count += 1,
             }
         }
-        n
+        if error_count > 0 {
+            println!("Async sender encountered {} errors", error_count);
+        }
+        sent_count
     }))
 }
 
@@ -121,13 +131,11 @@ where
     T: From<usize> + Send + 'static,
 {
     JoinHandle::Sync(thread::spawn(move || {
-        let mut c = 0;
-        loop {
-            match recv(&mut rx) {
-                Some(_) => c += 1,
-                None => break c,
-            }
+        let mut received_count = 0;
+        while let Some(_) = recv(&mut rx) {
+            received_count += 1;
         }
+        received_count
     }))
 }
 
@@ -136,13 +144,11 @@ where
     T: From<usize> + Send + 'static,
 {
     JoinHandle::Async(tokio::spawn(async move {
-        let mut c = 0;
-        loop {
-            match recv_async(&mut rx).await {
-                Some(_) => c += 1,
-                None => break c,
-            }
+        let mut received_count = 0;
+        while let Some(_) = recv_async(&mut rx).await {
+            received_count += 1;
         }
+        received_count
     }))
 }
 

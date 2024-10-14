@@ -2,7 +2,7 @@
 
 const MESSAGES_NO: usize = 1_000_000;
 const MESSAGE_SIZE: usize = 256;
-const MAX_SENDERS: usize = 5000;
+const MAX_SENDERS: usize = 2000;
 const MAX_RECEIVERS: usize = 10;
 
 use std::io::prelude::*;
@@ -25,6 +25,19 @@ mod tokio_bench;
 
 mod benchmark;
 
+fn run_npm_command(charts_dir: &Path, args: &[&str]) -> Result<(), String> {
+    match std::process::Command::new("npm")
+        .args(args)
+        .current_dir(charts_dir)
+        .stdout(Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("npm command failed with status: {}", status)),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
 fn main() {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -44,27 +57,14 @@ fn main() {
     let mut file = File::create(result_path).unwrap();
     file.write_all(json_str.as_ref()).unwrap();
 
-    match std::process::Command::new("npm")
-        .args(["install"])
-        .current_dir(&charts_dir)
-        .stdout(Stdio::null())
-        .status()
-    {
-        Ok(_) => {}
-        Err(err) => {
-            eprintln!("{}", err);
-            eprintln!("Maybe node.js is not installed on your system. You can install it from https://nodejs.org/en.");
-            std::process::exit(1);
-        }
+    if let Err(err) = run_npm_command(&charts_dir, &["install"]) {
+        eprintln!("Failed to run 'npm install': {}", err);
+        eprintln!("Maybe node.js is not installed on your system. You can install it from https://nodejs.org/en.");
+        std::process::exit(1);
     }
 
-    match std::process::Command::new("npm")
-        .args(["run", "update"])
-        .current_dir(&charts_dir)
-        .stdout(Stdio::null())
-        .status()
-    {
+    match run_npm_command(&charts_dir, &["run", "update"]) {
         Ok(_) => println!("Charts updated successfully"),
-        Err(err) => eprintln!("{}", err),
+        Err(err) => eprintln!("Failed to run 'npm run update': {}", err),
     }
 }
