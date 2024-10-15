@@ -84,3 +84,84 @@ impl<'a, T> IntoIterator for &'a Queue<T> {
         self.iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_queue() {
+        let queue: Queue<i32> = Queue::new();
+        assert_eq!(queue.len(), 0);
+    }
+
+    #[test]
+    fn test_with_capacity() {
+        let queue: Queue<i32> = Queue::with_capacity(10);
+        assert_eq!(queue.len(), 0);
+    }
+
+    #[test]
+    fn test_enqueue_dequeue() {
+        let mut queue = Queue::new();
+        queue.enqueue(1, 10);
+        queue.enqueue(2, 20);
+        queue.enqueue(3, 30);
+
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.dequeue(), Some((1, 10)));
+        assert_eq!(queue.dequeue(), Some((2, 20)));
+        assert_eq!(queue.dequeue(), Some((3, 30)));
+        assert_eq!(queue.dequeue(), None);
+        assert_eq!(queue.len(), 0);
+    }
+
+    #[test]
+    fn test_contains() {
+        let mut queue = Queue::new();
+        queue.enqueue(1, "one");
+        queue.enqueue(2, "two");
+        queue.enqueue(3, "three");
+
+        assert!(queue.contains(1));
+        assert!(queue.contains(2));
+        assert!(queue.contains(3));
+        assert!(!queue.contains(4));
+    }
+
+    #[test]
+    fn test_remove() {
+        let mut queue = Queue::new();
+        queue.enqueue(1, "one");
+        queue.enqueue(2, "two");
+        queue.enqueue(3, "three");
+
+        assert_eq!(queue.remove(2), Some((2, "two")));
+        assert_eq!(queue.len(), 2);
+        assert!(!queue.contains(2));
+
+        assert_eq!(queue.remove(4), None);
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut queue = Queue::new();
+        queue.enqueue(1, 10);
+        queue.enqueue(2, 20);
+        queue.enqueue(3, 30);
+
+        let collected: Vec<_> = queue.iter().collect();
+        assert_eq!(collected, vec![&(1, 10), &(2, 20), &(3, 30)]);
+    }
+
+    #[test]
+    fn test_into_iter() {
+        let mut queue = Queue::new();
+        queue.enqueue(1, 10);
+        queue.enqueue(2, 20);
+        queue.enqueue(3, 30);
+
+        let collected: Vec<_> = queue.into_iter().collect();
+        assert_eq!(collected, vec![&(1, 10), &(2, 20), &(3, 30)]);
+    }
+}
