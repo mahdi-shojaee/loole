@@ -2,10 +2,6 @@
 //! messages on the channel at the same time and each message will be received by only one thread.
 //!
 //! Producers can send and consumers can receive messages asynchronously or synchronously:
-//! - async send -> async receive
-//! - sync send -> sync receive
-//! - async send -> sync receive
-//! - sync send -> async receive
 //!
 //! There are two types of channels: bounded and unbounded.
 //!
@@ -47,13 +43,19 @@ mod mutex;
 mod queue;
 mod signal;
 
+use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::task::ready;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+
+use futures_core::Stream;
+use futures_sink::Sink;
 
 use mutex::MutexGuard;
 use queue::Queue;
@@ -407,7 +409,7 @@ pub struct SendFuture<T> {
 }
 
 impl<T> SendFuture<T> {
-    /// See [`Sender::is_disconnected`].
+    /// See [`Sender::is_closed`].
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
@@ -430,6 +432,91 @@ impl<T> SendFuture<T> {
     /// See [`Sender::capacity`].
     pub fn capacity(&self) -> Option<usize> {
         self.sender.capacity()
+    }
+}
+
+/// A sink that allows sending values into a channel.
+///
+/// Can be created via [`Sender::sink`] or [`Sender::into_sink`].
+pub struct SendSink<T>(SendFuture<T>);
+
+impl<T> SendSink<T> {
+    /// Returns a clone of a sending half of the channel of this sink.
+    pub fn sender(&self) -> &Sender<T> {
+        &self.0.sender
+    }
+
+    /// See [`Sender::is_closed`].
+    pub fn is_closed(&self) -> bool {
+        self.0.sender.is_closed()
+    }
+
+    /// See [`Sender::is_empty`].
+    pub fn is_empty(&self) -> bool {
+        self.0.sender.is_empty()
+    }
+
+    /// See [`Sender::is_full`].
+    pub fn is_full(&self) -> bool {
+        self.0.sender.is_full()
+    }
+
+    /// See [`Sender::len`].
+    pub fn len(&self) -> usize {
+        self.0.sender.len()
+    }
+
+    /// See [`Sender::capacity`].
+    pub fn capacity(&self) -> Option<usize> {
+        self.0.sender.capacity()
+    }
+
+    /// Returns whether the SendSinks are belong to the same channel.
+    pub fn same_channel(&self, other: &Self) -> bool {
+        self.0.sender.same_channel(&other.0.sender)
+    }
+}
+
+impl<T> Debug for SendSink<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SendSink").finish()
+    }
+}
+
+impl<T> Sink<T> for SendSink<T> {
+    type Error = SendError<T>;
+
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        self.0.msg = MessageOrId::Message(item);
+        Ok(())
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if let MessageOrId::Message(_) = self.0.msg {
+            ready!(Pin::new(&mut self.0).poll(cx))?;
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if let MessageOrId::Message(_) = self.0.msg {
+            ready!(Pin::new(&mut self.0).poll(cx))?;
+        }
+        self.0.sender.close();
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<T> Clone for SendSink<T> {
+    fn clone(&self) -> SendSink<T> {
+        SendSink(SendFuture {
+            sender: self.0.sender.clone(),
+            msg: MessageOrId::Invalid,
+        })
     }
 }
 
@@ -718,6 +805,22 @@ impl<T> Sender<T> {
     pub fn is_closed(&self) -> bool {
         self.shared_state.lock().is_closed()
     }
+
+    /// Returns a sink that can be used to send values into the channel.
+    pub fn sink(&self) -> SendSink<T> {
+        SendSink(SendFuture {
+            sender: self.clone(),
+            msg: MessageOrId::Invalid,
+        })
+    }
+
+    /// Converts this sender into a sink that can be used to send values into the channel.
+    pub fn into_sink(self) -> SendSink<T> {
+        SendSink(SendFuture {
+            sender: self,
+            msg: MessageOrId::Invalid,
+        })
+    }
 }
 
 impl<T> Drop for Sender<T> {
@@ -946,6 +1049,22 @@ impl<T> Receiver<T> {
     pub fn is_closed(&self) -> bool {
         self.shared_state.lock().is_closed()
     }
+
+    /// Returns a stream of messages from the channel.
+    pub fn stream(&self) -> RecvStream<T> {
+        RecvStream(RecvFuture {
+            id: self.get_next_id(),
+            receiver: self.clone(),
+        })
+    }
+
+    /// Convert this receiver into a stream that allows asynchronously receiving messages from the channel.
+    pub fn into_stream(self) -> RecvStream<T> {
+        RecvStream(RecvFuture {
+            id: self.get_next_id(),
+            receiver: self,
+        })
+    }
 }
 
 impl<T> Drop for Receiver<T> {
@@ -1020,6 +1139,69 @@ impl<T> IntoIterator for Receiver<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter { receiver: self }
+    }
+}
+
+/// A stream which allows asynchronously receiving messages.
+///
+/// Can be created via [`Receiver::stream`] or [`Receiver::into_stream`].
+pub struct RecvStream<T>(RecvFuture<T>);
+
+impl<T> RecvStream<T> {
+    /// See [`Receiver::is_closed`].
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+
+    /// See [`Receiver::is_empty`].
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// See [`Receiver::is_full`].
+    pub fn is_full(&self) -> bool {
+        self.0.is_full()
+    }
+
+    /// See [`Receiver::len`].
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// See [`Receiver::capacity`].
+    pub fn capacity(&self) -> Option<usize> {
+        self.0.capacity()
+    }
+
+    /// Returns whether the SendSinks are belong to the same channel.
+    pub fn same_channel(&self, other: &Self) -> bool {
+        self.0.receiver.same_channel(&other.0.receiver)
+    }
+}
+
+impl<T> std::fmt::Debug for RecvStream<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecvStream").finish()
+    }
+}
+
+impl<T> Clone for RecvStream<T> {
+    fn clone(&self) -> RecvStream<T> {
+        RecvStream(RecvFuture {
+            id: self.0.receiver.get_next_id(),
+            receiver: self.0.receiver.clone(),
+        })
+    }
+}
+
+impl<T> Stream for RecvStream<T> {
+    type Item = T;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.0).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(item) => Poll::Ready(item.ok()),
+        }
     }
 }
 

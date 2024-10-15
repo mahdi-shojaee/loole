@@ -33,14 +33,14 @@ fn main() {
 * **Safe**: No unsafe code: `#![forbid(unsafe_code)]`!
 * **Capable**: Send and receive operations can be blocking (sync) or non-blocking (async)
 * **Familiar**: Compatible with the Flume's API
-* **Simple**: No dependencies, fast to compile
+* **Simple**: Minimal dependencies, fast to compile
 
 ## Usage
 
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.3.2"
+loole = "0.4.0"
 ```
 
 ## Run Benchmarks
