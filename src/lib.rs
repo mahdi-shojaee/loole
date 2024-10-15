@@ -349,9 +349,10 @@ fn try_send<T>(m: T, id: usize, mut guard: MutexGuard<'_, SharedState<T>>) -> Tr
     }
     if !guard.is_full() {
         guard.queue.enqueue(id, m);
-        if let Some((_, s)) = guard.pending_recvs.dequeue() {
-            drop(guard);
-            s.wake();
+        let pending_recvs = std::mem::take(&mut guard.pending_recvs);
+        drop(guard);
+        for (_, s) in pending_recvs.iter() {
+            s.wake_by_ref();
         }
         return TrySendResult::Ok;
     } else if guard.cap == Some(0) {
@@ -401,8 +402,35 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<T> {
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
 pub struct SendFuture<T> {
-    shared_state: Arc<Mutex<SharedState<T>>>,
+    sender: Sender<T>,
     msg: MessageOrId<T>,
+}
+
+impl<T> SendFuture<T> {
+    /// See [`Sender::is_disconnected`].
+    pub fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
+
+    /// See [`Sender::is_empty`].
+    pub fn is_empty(&self) -> bool {
+        self.sender.is_empty()
+    }
+
+    /// See [`Sender::is_full`].
+    pub fn is_full(&self) -> bool {
+        self.sender.is_full()
+    }
+
+    /// See [`Sender::len`].
+    pub fn len(&self) -> usize {
+        self.sender.len()
+    }
+
+    /// See [`Sender::capacity`].
+    pub fn capacity(&self) -> Option<usize> {
+        self.sender.capacity()
+    }
 }
 
 #[derive(Debug)]
@@ -427,7 +455,7 @@ impl<T> Future for SendFuture<T> {
         let m = match self.msg.take() {
             MessageOrId::Message(m) => m,
             MessageOrId::Id(id) => {
-                let mut guard = self.shared_state.lock();
+                let mut guard = self.sender.shared_state.lock();
                 if guard.closed {
                     if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
                         return Poll::Ready(Err(SendError(m)));
@@ -437,7 +465,7 @@ impl<T> Future for SendFuture<T> {
             }
             MessageOrId::Invalid => panic!("Future polled after completion"),
         };
-        let mut guard = self.shared_state.lock();
+        let mut guard = self.sender.shared_state.lock();
         let id = guard.get_next_id();
         let (m, mut guard) = match try_send(m, id, guard) {
             TrySendResult::Ok => return Poll::Ready(Ok(())),
@@ -464,14 +492,41 @@ impl<T> Future for SendFuture<T> {
 #[derive(Debug)]
 pub struct RecvFuture<T> {
     id: usize,
-    shared_state: Arc<Mutex<SharedState<T>>>,
+    receiver: Receiver<T>,
+}
+
+impl<T> RecvFuture<T> {
+    /// See [`Receiver::is_closed`].
+    pub fn is_closed(&self) -> bool {
+        self.receiver.is_closed()
+    }
+
+    /// See [`Receiver::is_empty`].
+    pub fn is_empty(&self) -> bool {
+        self.receiver.is_empty()
+    }
+
+    /// See [`Receiver::is_full`].
+    pub fn is_full(&self) -> bool {
+        self.receiver.is_full()
+    }
+
+    /// See [`Receiver::len`].
+    pub fn len(&self) -> usize {
+        self.receiver.len()
+    }
+
+    /// See [`Receiver::capacity`].
+    pub fn capacity(&self) -> Option<usize> {
+        self.receiver.capacity()
+    }
 }
 
 impl<T> Future for RecvFuture<T> {
     type Output = Result<T, RecvError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut guard = match try_recv(self.shared_state.lock()) {
+        let mut guard = match try_recv(self.receiver.shared_state.lock()) {
             TryRecvResult::Ok(r) => return Poll::Ready(Ok(r)),
             TryRecvResult::Disconnected => return Poll::Ready(Err(RecvError::Disconnected)),
             TryRecvResult::Empty(guard) => guard,
@@ -490,7 +545,7 @@ impl<T> Future for RecvFuture<T> {
 
 impl<T> Drop for RecvFuture<T> {
     fn drop(&mut self) {
-        let mut guard = self.shared_state.lock();
+        let mut guard = self.receiver.shared_state.lock();
         guard.pending_recvs.remove(self.id);
     }
 }
@@ -557,7 +612,7 @@ impl<T> Sender<T> {
     /// If the channel is bounded and is full, the returned future will yield to the async runtime.
     pub fn send_async(&self, m: T) -> SendFuture<T> {
         SendFuture {
-            shared_state: Arc::clone(&self.shared_state),
+            sender: self.clone(),
             msg: MessageOrId::Message(m),
         }
     }
@@ -751,7 +806,7 @@ impl<T> Receiver<T> {
     pub fn recv_async(&self) -> RecvFuture<T> {
         RecvFuture {
             id: self.get_next_id(),
-            shared_state: Arc::clone(&self.shared_state),
+            receiver: self.clone(),
         }
     }
 
