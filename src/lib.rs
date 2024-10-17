@@ -613,7 +613,7 @@ impl<T> Future for RecvFuture<T> {
     type Output = Result<T, RecvError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut guard = match try_recv(self.receiver.shared_state.lock()) {
+        let mut guard = match try_recv(self.receiver.inner.shared_state.lock()) {
             TryRecvResult::Ok(r) => return Poll::Ready(Ok(r)),
             TryRecvResult::Disconnected => return Poll::Ready(Err(RecvError::Disconnected)),
             TryRecvResult::Empty(guard) => guard,
@@ -632,7 +632,7 @@ impl<T> Future for RecvFuture<T> {
 
 impl<T> Drop for RecvFuture<T> {
     fn drop(&mut self) {
-        let mut guard = self.receiver.shared_state.lock();
+        let mut guard = self.receiver.inner.shared_state.lock();
         guard.pending_recvs.remove(self.id);
     }
 }
@@ -840,15 +840,19 @@ impl<T> Drop for Sender<T> {
     }
 }
 
+struct ReceiverInner<T> {
+    shared_state: Arc<Mutex<SharedState<T>>>,
+    recv_count: AtomicUsize,
+    next_id: AtomicUsize,
+}
+
 /// The receiving end of a channel.
 ///
 /// Note: Cloning the receiver *does not* turn this channel into a broadcast channel.
 /// Each message will only be received by a single receiver. This is useful for
 /// implementing work stealing for concurrent programs.
 pub struct Receiver<T> {
-    shared_state: Arc<Mutex<SharedState<T>>>,
-    recv_count: Arc<AtomicUsize>,
-    next_id: Arc<AtomicUsize>,
+    inner: Arc<ReceiverInner<T>>,
 }
 
 impl<T> std::fmt::Debug for Receiver<T> {
@@ -866,11 +870,9 @@ impl<T> Clone for Receiver<T> {
     /// Each message will only be received by a single receiver. This is useful for
     /// implementing work stealing for concurrent programs.
     fn clone(&self) -> Self {
-        self.recv_count.fetch_add(1, Ordering::Relaxed);
+        self.inner.recv_count.fetch_add(1, Ordering::Relaxed);
         Self {
-            shared_state: Arc::clone(&self.shared_state),
-            recv_count: Arc::clone(&self.recv_count),
-            next_id: Arc::clone(&self.next_id),
+            inner: Arc::clone(&self.inner),
         }
     }
 }
@@ -878,14 +880,16 @@ impl<T> Clone for Receiver<T> {
 impl<T> Receiver<T> {
     fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
         Self {
-            shared_state,
-            recv_count: Arc::new(AtomicUsize::new(1)),
-            next_id: Arc::new(AtomicUsize::new(1)),
+            inner: Arc::new(ReceiverInner {
+                shared_state,
+                recv_count: AtomicUsize::new(1),
+                next_id: AtomicUsize::new(1),
+            }),
         }
     }
 
     fn get_next_id(&self) -> usize {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        self.inner.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Attempts to receive a value from the channel associated with this receiver, returning an error if
@@ -894,7 +898,7 @@ impl<T> Receiver<T> {
     /// This method will block until a value is available on the channel, or until the channel is empty
     /// or all senders have been dropped.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        match try_recv(self.shared_state.lock()) {
+        match try_recv(self.inner.shared_state.lock()) {
             TryRecvResult::Ok(m) => Ok(m),
             TryRecvResult::Disconnected => Err(TryRecvError::Disconnected),
             TryRecvResult::Empty(_) => Err(TryRecvError::Empty),
@@ -917,7 +921,7 @@ impl<T> Receiver<T> {
     /// dropped and there are no more messages in the channel, this method will return an error.
     pub fn recv(&self) -> Result<T, RecvError> {
         loop {
-            let mut guard = match try_recv(self.shared_state.lock()) {
+            let mut guard = match try_recv(self.inner.shared_state.lock()) {
                 TryRecvResult::Ok(r) => return Ok(r),
                 TryRecvResult::Disconnected => return Err(RecvError::Disconnected),
                 TryRecvResult::Empty(guard) => guard,
@@ -936,7 +940,7 @@ impl<T> Receiver<T> {
         let start_time = Instant::now();
         let mut timeout_remaining = timeout;
         loop {
-            let mut guard = match try_recv(self.shared_state.lock()) {
+            let mut guard = match try_recv(self.inner.shared_state.lock()) {
                 TryRecvResult::Ok(r) => return Ok(r),
                 TryRecvResult::Disconnected => return Err(RecvTimeoutError::Disconnected),
                 TryRecvResult::Empty(guard) => guard,
@@ -951,7 +955,7 @@ impl<T> Receiver<T> {
             let _ = sync_signal.wait_timeout(timeout_remaining);
             let elapsed = start_time.elapsed();
             if elapsed >= timeout {
-                let mut guard = self.shared_state.lock();
+                let mut guard = self.inner.shared_state.lock();
                 guard.pending_recvs.remove(id);
                 drop(guard);
                 return Err(RecvTimeoutError::Timeout);
@@ -970,7 +974,7 @@ impl<T> Receiver<T> {
     /// `try_iter`, the iterator will not attempt to fetch any more values from the channel once
     /// the function has been called.
     pub fn drain(&self) -> Drain<T> {
-        let mut guard = self.shared_state.lock();
+        let mut guard = self.inner.shared_state.lock();
         let queue = std::mem::take(&mut guard.queue);
         let n = guard
             .cap
@@ -1006,7 +1010,7 @@ impl<T> Receiver<T> {
 
     /// Returns `true` if the two receivers belong to the same channel, and `false` otherwise.
     pub fn same_channel(&self, other: &Receiver<T>) -> bool {
-        Arc::ptr_eq(&self.shared_state, &other.shared_state)
+        Arc::ptr_eq(&self.inner.shared_state, &other.inner.shared_state)
     }
 
     /// Returns the number of messages currently in the channel.
@@ -1014,26 +1018,26 @@ impl<T> Receiver<T> {
     /// This function is useful for determining how many messages are waiting to be processed
     /// by consumers, or for implementing backpressure mechanisms.
     pub fn len(&self) -> usize {
-        self.shared_state.lock().len()
+        self.inner.shared_state.lock().len()
     }
 
     /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
     pub fn capacity(&self) -> Option<usize> {
-        self.shared_state.lock().cap
+        self.inner.shared_state.lock().cap
     }
 
     /// Returns true if the channel is empty.
     ///
     /// Note: Zero-capacity channels are always empty.
     pub fn is_empty(&self) -> bool {
-        self.shared_state.lock().is_empty()
+        self.inner.shared_state.lock().is_empty()
     }
 
     /// Returns true if the channel is full.
     ///
     /// Note: Zero-capacity channels are always full.
     pub fn is_full(&self) -> bool {
-        self.shared_state.lock().is_full()
+        self.inner.shared_state.lock().is_full()
     }
 
     /// Closes the channel.
@@ -1042,12 +1046,12 @@ impl<T> Receiver<T> {
     ///
     /// The remaining messages can still be received.
     pub fn close(&self) -> bool {
-        self.shared_state.lock().close()
+        self.inner.shared_state.lock().close()
     }
 
     /// Returns true if the channel is closed.
     pub fn is_closed(&self) -> bool {
-        self.shared_state.lock().is_closed()
+        self.inner.shared_state.lock().is_closed()
     }
 
     /// Returns a stream of messages from the channel.
@@ -1070,13 +1074,14 @@ impl<T> Receiver<T> {
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         let _ = self
+            .inner
             .recv_count
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                 let mut count = c;
                 if count > 0 {
                     count -= 1;
                     if count == 0 {
-                        self.shared_state.lock().close();
+                        self.inner.shared_state.lock().close();
                     }
                 }
                 Some(count)
