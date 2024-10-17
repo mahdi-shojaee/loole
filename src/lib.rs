@@ -542,7 +542,7 @@ impl<T> Future for SendFuture<T> {
         let m = match self.msg.take() {
             MessageOrId::Message(m) => m,
             MessageOrId::Id(id) => {
-                let mut guard = self.sender.shared_state.lock();
+                let mut guard = self.sender.inner.shared_state.lock();
                 if guard.closed {
                     if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
                         return Poll::Ready(Err(SendError(m)));
@@ -552,7 +552,7 @@ impl<T> Future for SendFuture<T> {
             }
             MessageOrId::Invalid => panic!("Future polled after completion"),
         };
-        let mut guard = self.sender.shared_state.lock();
+        let mut guard = self.sender.inner.shared_state.lock();
         let id = guard.get_next_id();
         let (m, mut guard) = match try_send(m, id, guard) {
             TrySendResult::Ok => return Poll::Ready(Ok(())),
@@ -637,11 +637,15 @@ impl<T> Drop for RecvFuture<T> {
     }
 }
 
+struct SenderInner<T> {
+    shared_state: Arc<Mutex<SharedState<T>>>,
+    send_count: AtomicUsize,
+    next_id: AtomicUsize,
+}
+
 /// The sending half of a channel.
 pub struct Sender<T> {
-    shared_state: Arc<Mutex<SharedState<T>>>,
-    send_count: Arc<AtomicUsize>,
-    next_id: Arc<AtomicUsize>,
+    inner: Arc<SenderInner<T>>,
 }
 
 impl<T> std::fmt::Debug for Sender<T> {
@@ -654,11 +658,9 @@ impl<T> Clone for Sender<T> {
     /// Clones this sender. A [`Sender`] acts as a handle to the sending end of a channel. The remaining
     /// contents of the channel will only be cleaned up when all senders and the receiver have been dropped.
     fn clone(&self) -> Self {
-        self.send_count.fetch_add(1, Ordering::Relaxed);
+        self.inner.send_count.fetch_add(1, Ordering::Relaxed);
         Self {
-            shared_state: Arc::clone(&self.shared_state),
-            send_count: Arc::clone(&self.send_count),
-            next_id: Arc::clone(&self.next_id),
+            inner: Arc::clone(&self.inner),
         }
     }
 }
@@ -666,14 +668,16 @@ impl<T> Clone for Sender<T> {
 impl<T> Sender<T> {
     fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
         Self {
-            shared_state,
-            send_count: Arc::new(AtomicUsize::new(1)),
-            next_id: Arc::new(AtomicUsize::new(1)),
+            inner: Arc::new(SenderInner {
+                shared_state,
+                send_count: AtomicUsize::new(1),
+                next_id: AtomicUsize::new(1),
+            })
         }
     }
 
     fn get_next_id(&self) -> usize {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        self.inner.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// It returns an error if the channel is bounded and full, or if all receivers have been dropped.
@@ -685,7 +689,7 @@ impl<T> Sender<T> {
     /// take appropriate action, such as retrying the send operation later or buffering the value
     /// until you can send it successfully.
     pub fn try_send(&self, m: T) -> Result<(), TrySendError<T>> {
-        match try_send(m, self.get_next_id(), self.shared_state.lock()) {
+        match try_send(m, self.get_next_id(), self.inner.shared_state.lock()) {
             TrySendResult::Ok => Ok(()),
             TrySendResult::Disconnected(m) => Err(TrySendError::Disconnected(m)),
             TrySendResult::Full(m, _) => Err(TrySendError::Full(m)),
@@ -708,7 +712,7 @@ impl<T> Sender<T> {
     /// the channel is bounded and is full and no receivers are available.
     pub fn send(&self, m: T) -> Result<(), SendError<T>> {
         let id = self.get_next_id();
-        let (m, mut guard) = match try_send(m, id, self.shared_state.lock()) {
+        let (m, mut guard) = match try_send(m, id, self.inner.shared_state.lock()) {
             TrySendResult::Ok => return Ok(()),
             TrySendResult::Disconnected(m) => return Err(SendError(m)),
             TrySendResult::Full(m, guard) => (m, guard),
@@ -719,7 +723,7 @@ impl<T> Sender<T> {
             .enqueue(id, (m, Some(sync_signal.clone().into())));
         drop(guard);
         sync_signal.wait();
-        let mut guard = self.shared_state.lock();
+        let mut guard = self.inner.shared_state.lock();
         if guard.closed {
             if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
                 return Err(SendError(m));
@@ -735,7 +739,7 @@ impl<T> Sender<T> {
     /// available, the timeout has expired, or all receivers have been dropped.
     pub fn send_timeout(&self, m: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
         let id = self.get_next_id();
-        let (m, mut guard) = match try_send(m, id, self.shared_state.lock()) {
+        let (m, mut guard) = match try_send(m, id, self.inner.shared_state.lock()) {
             TrySendResult::Ok => return Ok(()),
             TrySendResult::Disconnected(m) => return Err(SendTimeoutError::Disconnected(m)),
             TrySendResult::Full(m, guard) => (m, guard),
@@ -744,7 +748,7 @@ impl<T> Sender<T> {
         guard.pending_sends.enqueue(id, (m, None));
         drop(guard);
         let _ = sync_signal.wait_timeout(timeout);
-        let mut guard = self.shared_state.lock();
+        let mut guard = self.inner.shared_state.lock();
         if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
             if guard.closed {
                 return Err(SendTimeoutError::Disconnected(m));
@@ -762,7 +766,7 @@ impl<T> Sender<T> {
 
     /// Returns `true` if the two senders belong to the same channel, and `false` otherwise.
     pub fn same_channel(&self, other: &Sender<T>) -> bool {
-        Arc::ptr_eq(&self.shared_state, &other.shared_state)
+        Arc::ptr_eq(&self.inner.shared_state, &other.inner.shared_state)
     }
 
     /// Returns the number of messages currently in the channel.
@@ -770,26 +774,26 @@ impl<T> Sender<T> {
     /// This function is useful for determining how many messages are waiting to be processed
     /// by consumers, or for implementing backpressure mechanisms.
     pub fn len(&self) -> usize {
-        self.shared_state.lock().len()
+        self.inner.shared_state.lock().len()
     }
 
     /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
     pub fn capacity(&self) -> Option<usize> {
-        self.shared_state.lock().cap
+        self.inner.shared_state.lock().cap
     }
 
     /// Returns true if the channel is empty.
     ///
     /// Note: Zero-capacity channels are always empty.
     pub fn is_empty(&self) -> bool {
-        self.shared_state.lock().is_empty()
+        self.inner.shared_state.lock().is_empty()
     }
 
     /// Returns true if the channel is full.
     ///
     /// Note: Zero-capacity channels are always full.
     pub fn is_full(&self) -> bool {
-        self.shared_state.lock().is_full()
+        self.inner.shared_state.lock().is_full()
     }
 
     /// Closes the channel.
@@ -798,12 +802,12 @@ impl<T> Sender<T> {
     ///
     /// The remaining messages can still be received.
     pub fn close(&self) -> bool {
-        self.shared_state.lock().close()
+        self.inner.shared_state.lock().close()
     }
 
     /// Returns true if the channel is closed.
     pub fn is_closed(&self) -> bool {
-        self.shared_state.lock().is_closed()
+        self.inner.shared_state.lock().is_closed()
     }
 
     /// Returns a sink that can be used to send values into the channel.
@@ -826,13 +830,14 @@ impl<T> Sender<T> {
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         let _ = self
+            .inner
             .send_count
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                 let mut count = c;
                 if count > 0 {
                     count -= 1;
                     if count == 0 {
-                        self.shared_state.lock().close();
+                        self.inner.shared_state.lock().close();
                     }
                 }
                 Some(count)
