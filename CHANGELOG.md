@@ -1,16 +1,13 @@
 # Changelog
 
 ## Version 0.4.0
+- Fixed bug in send methods to properly wake pending receivers
 - Implemented Stream and Sink traits for Receiver and Sender
 - Added SendSink struct to wrap Sender for Sink implementation
 - Implemented Sink trait from futures crate for SendSink
 - Added RecvStream struct to wrap Receiver for Stream implementation
 - Implemented Stream trait from futures crate for RecvStream
-- Added helper methods to create SendSink and RecvStream instances
-
-## Version 0.3.2
-- Fixed bug in send methods to properly wake pending receivers
-- Added convenience methods to SendFuture and RecvFuture:
+- Added convenience methods to SendFuture, RecvFuture, SendSink and RecvStream:
   - is_closed(): Check if the channel is closed
   - is_empty(): Check if the channel is empty
   - is_full(): Check if the channel is full
