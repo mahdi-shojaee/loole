@@ -92,11 +92,8 @@ where
 {
     JoinHandle::Sync(thread::spawn(move || {
         let mut received_count = 0;
-        loop {
-            match recv(&rx) {
-                Ok(_) => received_count += 1,
-                Err(_) => break,
-            }
+        while recv(&rx).is_ok() {
+            received_count += 1;
         }
         received_count
     }))

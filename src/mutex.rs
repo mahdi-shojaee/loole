@@ -13,6 +13,6 @@ impl<T> StdMutex<T> {
 
     #[inline(always)]
     pub fn lock(&self) -> MutexGuard<T> {
-        self.0.lock().map_or_else(|e| e.into_inner(), |v| v)
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

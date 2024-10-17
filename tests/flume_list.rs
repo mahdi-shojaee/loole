@@ -41,6 +41,7 @@ fn capacity() {
     assert_eq!(r.capacity(), None);
 }
 
+#[allow(clippy::bool_assert_comparison)]
 #[test]
 fn len_empty_full() {
     let (s, r) = unbounded();

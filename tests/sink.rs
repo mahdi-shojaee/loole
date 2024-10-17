@@ -56,9 +56,9 @@ async fn test_send_sink_multiple() {
     let (tx, rx) = unbounded();
     let mut sink = tx.into_sink();
 
-    let items = vec![1, 2, 3, 4, 5];
-    for item in items.iter() {
-        sink.send(*item).await.unwrap();
+    let items = [1, 2, 3, 4, 5];
+    for item in items {
+        sink.send(item).await.unwrap();
     }
 
     let received: Vec<i32> = rx.stream().take(5).collect().await;

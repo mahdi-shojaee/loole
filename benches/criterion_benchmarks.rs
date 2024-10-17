@@ -51,6 +51,7 @@ impl<const SIZE: usize> Default for FilledVec<SIZE> {
     }
 }
 
+#[allow(clippy::len_without_is_empty)]
 pub trait Length {
     fn len(&self) -> usize;
 }
@@ -349,12 +350,12 @@ async fn async_select_recv_buffer_0(msg_no: usize) {
     let (tx2, rx2) = bounded(0);
 
     tokio::spawn(async move {
-        for i in (0..count).into_iter().filter(|n| n % 2 == 0) {
+        for i in (0..count).filter(|n| n % 2 == 0) {
             tx1.send_async(i).await.unwrap();
         }
     });
     tokio::spawn(async move {
-        for i in (0..count).into_iter().filter(|n| n % 2 == 1) {
+        for i in (0..count).filter(|n| n % 2 == 1) {
             tx2.send_async(i).await.unwrap();
         }
     });
