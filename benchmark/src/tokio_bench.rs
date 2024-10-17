@@ -132,7 +132,7 @@ where
 {
     JoinHandle::Sync(thread::spawn(move || {
         let mut received_count = 0;
-        while let Some(_) = recv(&mut rx) {
+        while recv(&mut rx).is_some() {
             received_count += 1;
         }
         received_count
@@ -145,7 +145,7 @@ where
 {
     JoinHandle::Async(tokio::spawn(async move {
         let mut received_count = 0;
-        while let Some(_) = recv_async(&mut rx).await {
+        while recv_async(&mut rx).await.is_some() {
             received_count += 1;
         }
         received_count

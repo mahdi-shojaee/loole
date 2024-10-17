@@ -279,7 +279,7 @@ fn hydra() {
     for _ in 0..10 {
         for tx in &txs {
             for _ in 0..msg_num {
-                tx.send(Default::default()).unwrap();
+                tx.send(()).unwrap();
             }
         }
 
@@ -316,7 +316,7 @@ fn robin() {
         let main_tx = main_tx.clone();
         std::thread::spawn(move || {
             for _ in 0..msg_num {
-                main_tx.send(Default::default()).unwrap();
+                main_tx.send(()).unwrap();
             }
         });
 

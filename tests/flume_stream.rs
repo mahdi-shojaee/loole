@@ -231,7 +231,7 @@ async fn stream_forward_issue_55() { // https://github.com/zesterer/flume/issues
         let (tx, rx) = flume::bounded(100);
 
         let send_task = dummy_stream()
-            .map(|i| Ok(i))
+            .map(Ok)
             .forward(tx.into_sink().sink_map_err(|e| {
                 panic!("send error:{:#?}", e)
             }));

@@ -43,6 +43,7 @@ fn capacity() {
     }
 }
 
+#[allow(clippy::bool_assert_comparison)]
 #[test]
 fn len_empty_full() {
     let (s, r) = bounded(2);
