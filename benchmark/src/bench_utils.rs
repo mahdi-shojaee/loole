@@ -4,6 +4,7 @@ pub struct BenchResult {
     pub throughput: usize,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum BenchError {
     ZeroCapacityNotSupported,
