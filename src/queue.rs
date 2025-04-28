@@ -1,59 +1,69 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug)]
 pub struct Queue<T> {
-    inner: VecDeque<(usize, T)>,
+    queue: VecDeque<usize>,
+    map: HashMap<usize, T>,
 }
 
 impl<T> Queue<T> {
     pub fn new() -> Self {
         Self {
-            inner: VecDeque::new(),
+            queue: VecDeque::new(),
+            map: HashMap::new(),
         }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            inner: VecDeque::with_capacity(capacity),
+            queue: VecDeque::with_capacity(capacity),
+            map: HashMap::with_capacity(capacity),
         }
     }
 
     #[inline(always)]
     pub fn enqueue(&mut self, id: usize, value: T) {
-        self.inner.push_back((id, value));
+        self.queue.push_back(id);
+        self.map.insert(id, value);
     }
 
     #[inline(always)]
     pub fn dequeue(&mut self) -> Option<(usize, T)> {
-        self.inner.pop_front()
+        let id = self.queue.pop_front()?;
+        let value = self.map.remove(&id)?;
+        Some((id, value))
     }
 
     pub fn contains(&self, id: usize) -> bool {
-        self.inner.iter().any(|&(i, _)| i == id)
+        self.map.contains_key(&id)
+    }
+
+    pub fn get(&self, id: usize) -> Option<&T> {
+        self.map.get(&id)
     }
 
     pub fn remove(&mut self, id: usize) -> Option<(usize, T)> {
-        self.inner.remove(self.index_by_id(id)?)
+        if let Some(value) = self.map.remove(&id) {
+            if let Some(index) = self.queue.iter().position(|&x| x == id) {
+                self.queue.remove(index);
+            }
+            Some((id, value))
+        } else {
+            None
+        }
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.queue.len()
     }
 
     #[inline(always)]
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
-            inner: self.inner.iter(),
+            keys: self.queue.iter(),
+            values: &self.map,
         }
-    }
-
-    fn index_by_id(&self, id: usize) -> Option<usize> {
-        self.inner
-            .iter()
-            .enumerate()
-            .find(|(_, m)| m.0 == id)
-            .map(|(index, _)| index)
     }
 }
 
@@ -64,20 +74,22 @@ impl<T> Default for Queue<T> {
 }
 
 pub struct Iter<'a, T> {
-    inner: std::collections::vec_deque::Iter<'a, (usize, T)>,
+    keys: std::collections::vec_deque::Iter<'a, usize>,
+    values: &'a HashMap<usize, T>,
 }
 
 impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = &'a (usize, T);
+    type Item = (usize, &'a T);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        let id = self.keys.next()?;
+        self.values.get(id).map(|value| (*id, value))
     }
 }
 
 impl<'a, T> IntoIterator for &'a Queue<T> {
-    type Item = &'a (usize, T);
+    type Item = (usize, &'a T);
     type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -151,7 +163,7 @@ mod tests {
         queue.enqueue(3, 30);
 
         let collected: Vec<_> = queue.iter().collect();
-        assert_eq!(collected, vec![&(1, 10), &(2, 20), &(3, 30)]);
+        assert_eq!(collected, vec![(1, &10), (2, &20), (3, &30)]);
     }
 
     #[test]
@@ -162,6 +174,6 @@ mod tests {
         queue.enqueue(3, 30);
 
         let collected: Vec<_> = queue.into_iter().collect();
-        assert_eq!(collected, vec![&(1, 10), &(2, 20), &(3, 30)]);
+        assert_eq!(collected, vec![(1, &10), (2, &20), (3, &30)]);
     }
 }

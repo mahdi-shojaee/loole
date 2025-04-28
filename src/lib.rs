@@ -351,11 +351,13 @@ fn try_send<T>(m: T, id: usize, mut guard: MutexGuard<'_, SharedState<T>>) -> Tr
     }
     if !guard.is_full() {
         guard.queue.enqueue(id, m);
+
         let pending_recvs = std::mem::take(&mut guard.pending_recvs);
         drop(guard);
         for (_, s) in pending_recvs.iter() {
             s.wake_by_ref();
         }
+        
         return TrySendResult::Ok;
     } else if guard.cap == Some(0) {
         if let Some((_, s)) = guard.pending_recvs.dequeue() {
@@ -548,7 +550,22 @@ impl<T> Future for SendFuture<T> {
                         return Poll::Ready(Err(SendError(m)));
                     }
                 }
-                return Poll::Ready(Ok(()));
+                // Check if the message has been sent
+                if !guard.pending_sends.contains(id) {
+                    return Poll::Ready(Ok(()));
+                }
+                // Message is still pending, update the waker and return Pending
+                let s = if let Some((_, Some(s))) = guard.pending_sends.get(id) {
+                    Some(s.clone())
+                } else {
+                    None
+                };
+                drop(guard);
+                if let Some(s) = s {
+                    s.wake();
+                }
+                self.msg = MessageOrId::Id(id);
+                return Poll::Pending;
             }
             MessageOrId::Invalid => panic!("Future polled after completion"),
         };
@@ -718,15 +735,21 @@ impl<T> Sender<T> {
             TrySendResult::Full(m, guard) => (m, guard),
         };
         let sync_signal = SyncSignal::new();
+
         guard
             .pending_sends
             .enqueue(id, (m, Some(sync_signal.clone().into())));
         drop(guard);
-        sync_signal.wait();
-        let mut guard = self.inner.shared_state.lock();
-        if guard.closed {
-            if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
-                return Err(SendError(m));
+        loop {
+            sync_signal.wait();
+            let mut guard = self.inner.shared_state.lock();
+            if guard.closed {
+                if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
+                    return Err(SendError(m));
+                }
+            }
+            if !guard.pending_sends.contains(id) {
+                break;
             }
         }
         Ok(())
@@ -745,15 +768,22 @@ impl<T> Sender<T> {
             TrySendResult::Full(m, guard) => (m, guard),
         };
         let sync_signal = SyncSignal::new();
-        guard.pending_sends.enqueue(id, (m, None));
+        guard
+            .pending_sends
+            .enqueue(id, (m, Some(sync_signal.clone().into())));
         drop(guard);
-        let _ = sync_signal.wait_timeout(timeout);
-        let mut guard = self.inner.shared_state.lock();
-        if let Some((_, (m, _))) = guard.pending_sends.remove(id) {
-            if guard.closed {
-                return Err(SendTimeoutError::Disconnected(m));
+        loop {
+            let _ = sync_signal.wait_timeout(timeout);
+            let mut guard = self.inner.shared_state.lock();
+            if let Some((_, (m, Some(_)))) = guard.pending_sends.remove(id) {
+                if guard.closed {
+                    return Err(SendTimeoutError::Disconnected(m));
+                }
+                return Err(SendTimeoutError::Timeout(m));
             }
-            return Err(SendTimeoutError::Timeout(m));
+            if !guard.pending_sends.contains(id) {
+                break;
+            }
         }
         Ok(())
     }

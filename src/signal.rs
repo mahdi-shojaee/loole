@@ -24,6 +24,14 @@ pub struct AsyncSignal {
     waker: Waker,
 }
 
+impl Clone for AsyncSignal {
+    fn clone(&self) -> Self {
+        AsyncSignal {
+            waker: self.waker.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SyncSignalInner {
     thread: Thread,
@@ -151,6 +159,16 @@ impl Signal {
         match self {
             Self::Async(s) => s.waker.wake_by_ref(),
             Self::Sync(s) => s.notify(),
+        }
+    }
+}
+
+impl Clone for Signal {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        match self {
+            Self::Async(s) => Self::Async(s.clone()),
+            Self::Sync(s) => Self::Sync(s.clone()),
         }
     }
 }

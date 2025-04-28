@@ -6,7 +6,7 @@
     "update": "node --no-warnings main.js"
   },
   "dependencies": {
-    "echarts": "^5.4.3",
-    "jsdom": "^22.1.0"
+    "echarts": "^5.6.0",
+    "jsdom": "^26.1.0"
   }
 }

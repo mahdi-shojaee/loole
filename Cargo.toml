@@ -3,7 +3,7 @@ members = ["benchmark"]
 
 [package]
 name = "loole"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["Mahdi Shojaee <msh6180339@gmail.com>"]
 description = "A safe async/sync multi-producer, multi-consumer channel"
@@ -20,8 +20,8 @@ futures-sink = { version = "0.3", default-features = false }
 futures-core = { version = "0.3", default-features = false }
 
 [dev-dependencies]
-tokio = { version = "1.35.0", features = ["full"] }
-async-std = { version = "1.12.0", features = ["attributes", "unstable"] }
+tokio = { version = "1.44.2", features = ["full"] }
+async-std = { version = "1.13.1", features = ["attributes", "unstable"] }
 futures = { version = "^0.3", features = ["std"] }
 crossbeam-utils = "0.8.16"
 rand = "0.8.5"
