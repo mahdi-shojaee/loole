@@ -1,5 +1,12 @@
 # Changelog
 
+## Version 0.4.1
+- Performance: Added Sender/ReceiverInner types to consolidate two AtomicUsizes behind a single Arc (PR #6, thanks to [cod10129](https://github.com/cod10129))
+- Fixed send methods to properly check completion status before returning success
+- Refactored Queue implementation to use HashMap for storage
+- Fixed Clippy mismatched_lifetime_syntaxes warnings by adding explicit lifetime annotations
+- Updated benchmarks and dependencies
+
 ## Version 0.4.0
 - Fixed bug in send methods to properly wake pending receivers
 - Implemented Stream and Sink traits for Receiver and Sender
