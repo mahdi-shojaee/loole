@@ -1,29 +1,88 @@
 use std::collections::{HashMap, VecDeque};
+use std::hash::{BuildHasher, Hasher};
+
+/// A hasher that hashes the key as its own identity. Ids in the pending
+/// queues are sequential counters produced by `SharedState::get_next_id`, so
+/// there is no adversarial control over keys and no collision/DoS risk. This
+/// avoids the default SipHash hashing cost on every enqueue/dequeue/contains,
+/// which is paid on the hot path of every parked send and async receive.
+#[derive(Default, Clone)]
+struct IdentityHasher {
+    hash: u64,
+}
+
+impl Hasher for IdentityHasher {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.hash ^= u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        let rem = chunks.remainder();
+        if !rem.is_empty() {
+            let mut b = [0u8; 8];
+            b[..rem.len()].copy_from_slice(rem);
+            self.hash ^= u64::from_le_bytes(b);
+        }
+    }
+
+    #[inline(always)]
+    fn write_usize(&mut self, i: usize) {
+        self.hash = i as u64;
+    }
+
+    #[inline(always)]
+    fn write_u64(&mut self, i: u64) {
+        self.hash = i;
+    }
+}
+
+#[derive(Default, Clone)]
+struct IdentityBuildHasher;
+
+impl BuildHasher for IdentityBuildHasher {
+    type Hasher = IdentityHasher;
+
+    #[inline(always)]
+    fn build_hasher(&self) -> IdentityHasher {
+        IdentityHasher { hash: 0 }
+    }
+}
 
 #[derive(Debug)]
 pub struct Queue<T> {
     queue: VecDeque<usize>,
-    map: HashMap<usize, T>,
+    map: HashMap<usize, T, IdentityBuildHasher>,
 }
 
 impl<T> Queue<T> {
     pub fn new() -> Self {
         Self {
             queue: VecDeque::new(),
-            map: HashMap::new(),
+            map: HashMap::with_hasher(IdentityBuildHasher),
         }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             queue: VecDeque::with_capacity(capacity),
-            map: HashMap::with_capacity(capacity),
+            map: HashMap::with_capacity_and_hasher(capacity, IdentityBuildHasher),
         }
     }
 
     #[inline(always)]
     pub fn enqueue(&mut self, id: usize, value: T) {
         self.queue.push_back(id);
+        self.map.insert(id, value);
+    }
+
+    #[inline(always)]
+    pub fn enqueue_front(&mut self, id: usize, value: T) {
+        self.queue.push_front(id);
         self.map.insert(id, value);
     }
 
@@ -75,7 +134,7 @@ impl<T> Default for Queue<T> {
 
 pub struct Iter<'a, T> {
     keys: std::collections::vec_deque::Iter<'a, usize>,
-    values: &'a HashMap<usize, T>,
+    values: &'a HashMap<usize, T, IdentityBuildHasher>,
 }
 
 impl<'a, T> Iterator for Iter<'a, T> {

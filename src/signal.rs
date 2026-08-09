@@ -37,6 +37,10 @@ struct SyncSignalInner {
     thread: Thread,
     notified: AtomicBool,
     park_called: AtomicBool,
+    /// Set by the consumer of a parked sender just before waking it, so the
+    /// sender can confirm consumption with an atomic load instead of a
+    /// channel re-lock (see `Sender::send`).
+    taken: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -72,8 +76,24 @@ impl SyncSignal {
                 thread: thread::current(),
                 notified: AtomicBool::new(false),
                 park_called: AtomicBool::new(false),
+                taken: AtomicBool::new(false),
             }),
         }
+    }
+
+    #[inline(always)]
+    pub fn mark_taken(&self) {
+        self.inner.taken.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    pub fn is_taken(&self) -> bool {
+        self.inner.taken.load(Ordering::Acquire)
+    }
+
+    #[inline(always)]
+    pub fn is_notified(&self) -> bool {
+        self.notified()
     }
 
     #[inline(always)]
@@ -146,6 +166,16 @@ impl From<SyncSignal> for Signal {
 }
 
 impl Signal {
+    /// Mark the sender this signal belongs to as consumed. Only meaningful for
+    /// sync signals: the receiver dequeues a parked sender's message and sets
+    /// this before waking it so the sender can confirm without a re-lock.
+    #[inline(always)]
+    pub fn mark_taken(&self) {
+        if let Self::Sync(s) = self {
+            s.mark_taken();
+        }
+    }
+
     #[inline(always)]
     pub fn wake(self) {
         match self {

@@ -20,12 +20,12 @@ futures-sink = { version = "0.3", default-features = false }
 futures-core = { version = "0.3", default-features = false }
 
 [dev-dependencies]
-tokio = { version = "1.44.2", features = ["full"] }
-async-std = { version = "1.13.1", features = ["attributes", "unstable"] }
+tokio = { version = "1.53.1", features = ["full"] }
+async-std = { version = "1.13.2", features = ["attributes", "unstable"] }
 futures = { version = "^0.3", features = ["std"] }
-crossbeam-utils = "0.8.16"
-rand = "0.8.5"
-criterion = { version = "0.5.1", features = ["html_reports"] }
+crossbeam-utils = "0.8.22"
+rand = "0.10.2"
+criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "criterion_benchmarks"

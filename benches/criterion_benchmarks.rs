@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use loole::{bounded, unbounded, Receiver, RecvError, SendError, Sender};
 use std::{error::Error, future::Future, thread, time::Instant};
 
