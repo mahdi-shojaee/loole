@@ -3,10 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "update": "node --no-warnings main.js"
+    "bench": "cargo bench -p benchmark --bench criterion_benchmarks --",
+    "update": "node update.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "echarts": "^5.6.0",
-    "jsdom": "^26.1.0"
+    "echarts": "^6.1.0",
+    "jsdom": "^29.1.1"
   }
 }

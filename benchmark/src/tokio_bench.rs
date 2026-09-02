@@ -1,48 +1,76 @@
+#![allow(clippy::manual_async_fn)] // LatencyChannel::send_async/recv_async must stay Send (tokio::spawn); async fn can't express that.
 use std::{future::Future, thread};
 use tokio::sync::mpsc::{
-    self, channel, error::SendError, unbounded_channel, Receiver, Sender, UnboundedReceiver,
+    channel, error::SendError, unbounded_channel, Receiver, Sender, UnboundedReceiver,
     UnboundedSender,
 };
 
-use crate::bench_utils::{calculate_benchmark_result, BenchError, BenchResult, JoinHandle};
+use crate::bench_utils::{
+    ping_pong_latency, setup_ping_pong, BenchError, Combo, JoinHandle, LatencyChannel,
+    LatencyChannels, LatencyProbe, LatencyResult, ThroughputRun,
+};
+use crate::message_type::Message;
+use tokio::runtime::Runtime;
 
-const UNBOUNDED_BUFFER_SIZE_ESTIMATION: usize = 100_000;
-
-pub fn crate_name() -> &'static str {
-    "loole"
+pub enum SenderEnum<T> {
+    Bounded(Sender<T>),
+    Unbounded(UnboundedSender<T>),
 }
 
-pub fn send<T>(tx: &Sender<T>, msg: T) -> Result<(), SendError<T>> {
-    tx.blocking_send(msg)
+pub enum ReceiverEnum<T> {
+    Bounded(Receiver<T>),
+    Unbounded(UnboundedReceiver<T>),
 }
 
-pub fn recv<T>(rx: &mut Receiver<T>) -> Option<T> {
-    rx.blocking_recv()
+impl<T> Clone for SenderEnum<T> {
+    fn clone(&self) -> Self {
+        match self {
+            SenderEnum::Bounded(tx) => SenderEnum::Bounded(tx.clone()),
+            SenderEnum::Unbounded(tx) => SenderEnum::Unbounded(tx.clone()),
+        }
+    }
 }
 
-pub fn send_async<T: 'static>(
-    tx: &Sender<T>,
-    msg: T,
-) -> impl Future<Output = Result<(), SendError<T>>> + '_ {
-    tx.send(msg)
+pub fn send<T>(tx: &SenderEnum<T>, msg: T) -> Result<(), SendError<T>> {
+    match tx {
+        SenderEnum::Bounded(tx) => tx.blocking_send(msg),
+        SenderEnum::Unbounded(tx) => tx.send(msg),
+    }
 }
 
-pub fn recv_async<T>(rx: &mut Receiver<T>) -> impl Future<Output = Option<T>> + '_ {
-    rx.recv()
+pub fn recv<T>(rx: &mut ReceiverEnum<T>) -> Option<T> {
+    match rx {
+        ReceiverEnum::Bounded(rx) => rx.blocking_recv(),
+        ReceiverEnum::Unbounded(rx) => rx.blocking_recv(),
+    }
 }
 
-async fn bench_helper<T, S, R>(
+pub async fn send_async<T: 'static>(tx: &SenderEnum<T>, msg: T) -> Result<(), SendError<T>> {
+    match tx {
+        SenderEnum::Bounded(tx) => tx.send(msg).await,
+        SenderEnum::Unbounded(tx) => tx.send(msg),
+    }
+}
+
+pub async fn recv_async<T>(rx: &mut ReceiverEnum<T>) -> Option<T> {
+    match rx {
+        ReceiverEnum::Bounded(rx) => rx.recv().await,
+        ReceiverEnum::Unbounded(rx) => rx.recv().await,
+    }
+}
+
+fn setup_helper<S, R>(
     senders_no: usize,
     receivers_no: usize,
     cap: Option<usize>,
     msg_no: usize,
+    message_size: usize,
     create_sender: S,
     create_receiver: R,
-) -> Result<BenchResult, BenchError>
+) -> Result<ThroughputRun, BenchError>
 where
-    T: From<usize> + Send + 'static,
-    S: Fn(Sender<T>, usize) -> JoinHandle<usize>,
-    R: Fn(Receiver<T>) -> JoinHandle<usize>,
+    S: Fn(SenderEnum<Message>, usize, usize) -> JoinHandle<usize>,
+    R: Fn(ReceiverEnum<Message>) -> JoinHandle<usize>,
 {
     if receivers_no > 1 {
         return Err(BenchError::MpmcNotSupported);
@@ -50,51 +78,58 @@ where
     if cap == Some(0) {
         return Err(BenchError::ZeroCapacityNotSupported);
     }
-    let (tx, rx) = channel(cap.unwrap_or(UNBOUNDED_BUFFER_SIZE_ESTIMATION));
-    let senders = create_senders(tx, senders_no, msg_no, create_sender);
+    let (tx, rx) = match cap {
+        Some(cap) => {
+            let (tx, rx) = channel(cap);
+            (SenderEnum::Bounded(tx), ReceiverEnum::Bounded(rx))
+        }
+        None => {
+            let (tx, rx) = unbounded_channel();
+            (SenderEnum::Unbounded(tx), ReceiverEnum::Unbounded(rx))
+        }
+    };
+    let senders = create_senders(tx, senders_no, msg_no, message_size, create_sender);
     let receivers = create_receivers(rx, receivers_no, create_receiver);
-    Ok(calculate_benchmark_result(senders, receivers).await)
+    Ok(ThroughputRun { senders, receivers })
 }
 
-fn create_senders<T, S>(
-    tx: Sender<T>,
+fn create_senders<S>(
+    tx: SenderEnum<Message>,
     senders_no: usize,
     msg_no: usize,
+    message_size: usize,
     create_sender: S,
 ) -> Vec<JoinHandle<usize>>
 where
-    S: Fn(Sender<T>, usize) -> JoinHandle<usize>,
+    S: Fn(SenderEnum<Message>, usize, usize) -> JoinHandle<usize>,
 {
     let mut senders = Vec::with_capacity(senders_no);
     for i in 0..senders_no {
         let n = msg_no / senders_no + if i < msg_no % senders_no { 1 } else { 0 };
-        senders.push(create_sender(tx.clone(), n));
+        senders.push(create_sender(tx.clone(), n, message_size));
     }
     senders
 }
 
-fn create_receivers<T, R>(
-    rx: Receiver<T>,
+fn create_receivers<R>(
+    rx: ReceiverEnum<Message>,
     receivers_no: usize,
     create_receiver: R,
 ) -> Vec<JoinHandle<usize>>
 where
-    R: Fn(Receiver<T>) -> JoinHandle<usize>,
+    R: Fn(ReceiverEnum<Message>) -> JoinHandle<usize>,
 {
     let mut receivers = Vec::with_capacity(receivers_no);
     receivers.push(create_receiver(rx));
     receivers
 }
 
-fn create_sync_sender<T>(tx: Sender<T>, n: usize) -> JoinHandle<usize>
-where
-    T: From<usize> + Send + 'static,
-{
+fn create_sync_sender(tx: SenderEnum<Message>, n: usize, message_size: usize) -> JoinHandle<usize> {
     JoinHandle::Sync(thread::spawn(move || {
         let mut error_count = 0;
         let mut sent_count = 0;
-        for k in 0..n {
-            match send(&tx, k.into()) {
+        for _ in 0..n {
+            match send(&tx, Message::new(message_size)) {
                 Ok(_) => sent_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -106,15 +141,16 @@ where
     }))
 }
 
-fn create_async_sender<T>(tx: Sender<T>, n: usize) -> JoinHandle<usize>
-where
-    T: From<usize> + Send + 'static,
-{
+fn create_async_sender(
+    tx: SenderEnum<Message>,
+    n: usize,
+    message_size: usize,
+) -> JoinHandle<usize> {
     JoinHandle::Async(tokio::spawn(async move {
         let mut error_count = 0;
         let mut sent_count = 0;
-        for k in 0..n {
-            match send_async(&tx, k.into()).await {
+        for _ in 0..n {
+            match send_async(&tx, Message::new(message_size)).await {
                 Ok(_) => sent_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -126,10 +162,7 @@ where
     }))
 }
 
-fn create_sync_receiver<T>(mut rx: Receiver<T>) -> JoinHandle<usize>
-where
-    T: From<usize> + Send + 'static,
-{
+fn create_sync_receiver(mut rx: ReceiverEnum<Message>) -> JoinHandle<usize> {
     JoinHandle::Sync(thread::spawn(move || {
         let mut received_count = 0;
         while recv(&mut rx).is_some() {
@@ -139,10 +172,7 @@ where
     }))
 }
 
-fn create_async_receiver<T>(mut rx: Receiver<T>) -> JoinHandle<usize>
-where
-    T: From<usize> + Send + 'static,
-{
+fn create_async_receiver(mut rx: ReceiverEnum<Message>) -> JoinHandle<usize> {
     JoinHandle::Async(tokio::spawn(async move {
         let mut received_count = 0;
         while recv_async(&mut rx).await.is_some() {
@@ -152,82 +182,151 @@ where
     }))
 }
 
-pub async fn bench_sync_sync<T>(
+pub fn setup_sync_sync(
     senders_no: usize,
     receivers_no: usize,
     buffer_size: Option<usize>,
     msg_no: usize,
-) -> Result<BenchResult, BenchError>
-where
-    T: From<usize> + Send + 'static,
-{
-    bench_helper(
+    message_size: usize,
+) -> Result<ThroughputRun, BenchError> {
+    setup_helper(
         senders_no,
         receivers_no,
         buffer_size,
         msg_no,
-        create_sync_sender::<T>,
-        create_sync_receiver::<T>,
+        message_size,
+        create_sync_sender,
+        create_sync_receiver,
     )
-    .await
 }
 
-pub async fn bench_async_async<T>(
+pub fn setup_async_async(
     senders_no: usize,
     receivers_no: usize,
     buffer_size: Option<usize>,
     msg_no: usize,
-) -> Result<BenchResult, BenchError>
-where
-    T: From<usize> + Send + Sync + 'static,
-{
-    bench_helper(
+    message_size: usize,
+) -> Result<ThroughputRun, BenchError> {
+    setup_helper(
         senders_no,
         receivers_no,
         buffer_size,
         msg_no,
-        create_async_sender::<T>,
-        create_async_receiver::<T>,
+        message_size,
+        create_async_sender,
+        create_async_receiver,
     )
-    .await
 }
 
-pub async fn bench_async_sync<T>(
+pub fn setup_async_sync(
     senders_no: usize,
     receivers_no: usize,
     buffer_size: Option<usize>,
     msg_no: usize,
-) -> Result<BenchResult, BenchError>
-where
-    T: From<usize> + Send + Sync + 'static,
-{
-    bench_helper(
+    message_size: usize,
+) -> Result<ThroughputRun, BenchError> {
+    setup_helper(
         senders_no,
         receivers_no,
         buffer_size,
         msg_no,
-        create_async_sender::<T>,
-        create_sync_receiver::<T>,
+        message_size,
+        create_async_sender,
+        create_sync_receiver,
     )
-    .await
 }
 
-pub async fn bench_sync_async<T>(
+pub fn setup_sync_async(
     senders_no: usize,
     receivers_no: usize,
     buffer_size: Option<usize>,
     msg_no: usize,
-) -> Result<BenchResult, BenchError>
-where
-    T: From<usize> + Send + Sync + 'static,
-{
-    bench_helper(
+    message_size: usize,
+) -> Result<ThroughputRun, BenchError> {
+    setup_helper(
         senders_no,
         receivers_no,
         buffer_size,
         msg_no,
-        create_sync_sender::<T>,
-        create_async_receiver::<T>,
+        message_size,
+        create_sync_sender,
+        create_async_receiver,
     )
-    .await
+}
+
+pub struct TokioChannel;
+
+impl LatencyChannel<Message> for TokioChannel {
+    type Sender = SenderEnum<Message>;
+    type Receiver = ReceiverEnum<Message>;
+
+    fn validate(_combo: Combo, cap: Option<usize>) -> Result<(), BenchError> {
+        if cap == Some(0) {
+            return Err(BenchError::ZeroCapacityNotSupported);
+        }
+        Ok(())
+    }
+
+    fn create(_combo: Combo, cap: Option<usize>) -> LatencyChannels<Self, Message> {
+        let pair = || match cap {
+            Some(cap) => {
+                let (tx, rx) = channel(cap);
+                (SenderEnum::Bounded(tx), ReceiverEnum::Bounded(rx))
+            }
+            None => {
+                let (tx, rx) = unbounded_channel();
+                (SenderEnum::Unbounded(tx), ReceiverEnum::Unbounded(rx))
+            }
+        };
+        let (ftx, frx) = pair();
+        let (btx, brx) = pair();
+        LatencyChannels {
+            sender_tx: ftx,
+            sender_rx: brx,
+            echoer_tx: btx,
+            echoer_rx: frx,
+        }
+    }
+
+    fn send(tx: &Self::Sender, msg: Message) {
+        let _ = send(tx, msg);
+    }
+
+    fn recv(rx: &mut Self::Receiver) -> Option<Message> {
+        recv(rx)
+    }
+
+    fn send_async(tx: &Self::Sender, msg: Message) -> impl Future<Output = ()> + Send + '_ {
+        let tx = tx.clone();
+        async move {
+            let _ = send_async(&tx, msg).await;
+        }
+    }
+
+    fn recv_async(rx: &mut Self::Receiver) -> impl Future<Output = Option<Message>> + Send + '_ {
+        async move { recv_async(rx).await }
+    }
+}
+
+pub fn validate_latency(combo: Combo, cap: Option<usize>) -> Result<(), BenchError> {
+    <TokioChannel as LatencyChannel<Message>>::validate(combo, cap)
+}
+
+pub fn setup_latency(
+    rt: &Runtime,
+    combo: Combo,
+    cap: Option<usize>,
+    message_size: usize,
+    warmup: usize,
+) -> Result<LatencyProbe, BenchError> {
+    setup_ping_pong::<TokioChannel>(rt, combo, cap, message_size, warmup)
+}
+
+pub fn bench_latency(
+    rt: &Runtime,
+    combo: Combo,
+    cap: Option<usize>,
+    message_size: usize,
+) -> Result<LatencyResult, BenchError> {
+    ping_pong_latency::<TokioChannel>(rt, combo, cap, message_size)
 }

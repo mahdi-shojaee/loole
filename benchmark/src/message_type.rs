@@ -59,3 +59,23 @@ impl<const SIZE: usize> Length for FilledVec<SIZE> {
 
 pub type StackType<const SIZE: usize> = Type<FilledArray<SIZE>>;
 pub type HeapType<const SIZE: usize> = Type<FilledVec<SIZE>>;
+
+pub struct Message(Vec<u8>);
+
+impl Message {
+    pub fn new(size: usize) -> Self {
+        Self(vec![0; size])
+    }
+}
+
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("len: {}", self.0.len()))
+    }
+}
+
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("len: {}", self.0.len()))
+    }
+}

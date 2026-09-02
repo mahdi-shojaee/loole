@@ -5,11 +5,15 @@ edition = "2021"
 
 [dependencies]
 loole = { path = ".." }
-async-channel = "2.1.1"
-flume = "0.11.0"
+async-channel = "2.5.0"
+flume = "0.12.0"
 kanal = { version = "0.1.1", features = ["std-mutex"] }
-crossbeam-channel = "0.5.15"
-tokio = { version = "1.44.2", features = ["full"] }
-num-format = "0.4.4"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
+crossbeam-channel = "0.5.16"
+tokio = { version = "1.53.1", features = ["full"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "criterion_benchmarks"
+harness = false
