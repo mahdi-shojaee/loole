@@ -48,8 +48,6 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::ready;
 use std::task::{Context, Poll};
@@ -557,13 +555,28 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T
 }
 
 /// A future that sends a value into a channel.
+///
+/// # Cancellation semantics
+///
+/// Dropping a pending `SendFuture` cancels the send: the still-queued message
+/// is removed from the channel's waiting queue and destroyed, mirroring the
+/// established cancel-safe `send` semantics of mature channel libraries. A
+/// message is
+/// only ever delivered if the future resolved to `Ok(())` or the receiver
+/// won the hand-off race just as the future was dropped (the queue-entry
+/// removal arbitrates that race uniquely, so the message is never dropped
+/// and delivered at the same time).
+///
+/// Completed futures (including those resolved with an error) drop without
+/// touching the channel: no lock is taken.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
 pub struct SendFuture<T> {
     sender: Sender<T>,
     msg: MessageOrId<T>,
     /// Set once the send has parked: the id of the `pending_sends` entry and
-    /// the waker signal that was registered with it.
+    /// the waker signal that was registered with it. Cleared on every
+    /// `Ready` return so a completed future's `Drop` is a no-op.
     parked: Option<SendParked>,
 }
 
@@ -656,8 +669,17 @@ impl<T> Sink<T> for SendSink<T> {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        // Superseding a parked send: if the previous item is still parked in
+        // the channel (a mid-flight restart before `poll_flush` finished), its
+        // queued entry is removed and its message destroyed, so a superseded
+        // pending message is cancelled exactly like a dropped future's. In
+        // normal sequential sink usage the entry is already flushed and this
+        // is a no-op discriminant check.
+        if let Some(parked) = self.0.parked.take() {
+            let mut guard = self.0.sender.inner.shared_state.lock();
+            guard.pending_sends.remove(parked.id);
+        }
         self.0.msg = MessageOrId::Message(item);
-        self.0.parked = None;
         Ok(())
     }
 
@@ -710,22 +732,42 @@ impl<T> Future for SendFuture<T> {
             // checking whether the entry is gone. (This is cheaper than an Arc
             // alloc per blocking send, which dominates low-capacity SPSC async
             // rows.)
+            let id = parked.id;
             let mut guard = self.sender.inner.shared_state.lock();
             if guard.closed {
-                if let Some((_, PendingSend::Parked(m, _))) = guard.pending_sends.remove(parked.id) {
+                if let Some((_, PendingSend::Parked(m, _))) = guard.pending_sends.remove(id) {
+                    drop(guard);
+                    self.parked = None;
                     return Poll::Ready(Err(SendError(m)));
                 }
             }
-            if !guard.pending_sends.contains(parked.id) {
+            let consumed = !guard.pending_sends.contains(id);
+            if consumed {
+                drop(guard);
+                self.parked = None;
                 return Poll::Ready(Ok(()));
             }
+            // The send is still queued: refresh the registered waker so a
+            // wake-up is never delivered to a stale waker when the future is
+            // re-polled by a different task (e.g. after `select!`).
+            let mut new_signal = parked.signal.clone();
+            new_signal.update_waker(cx.waker());
+            guard
+                .pending_sends
+                .get_mut(parked.id)
+                .map(|send| match send {
+                    PendingSend::Parked(_, signal) => *signal = new_signal.clone(),
+                    PendingSend::Gift(_) => {}
+                });
             drop(guard);
-            parked.signal.clone().wake();
+            self.parked.as_mut().map(|p| p.signal = new_signal);
             return Poll::Pending;
         }
         let m = match self.msg.take() {
             MessageOrId::Message(m) => m,
-            _ => panic!("Future polled after completion"),
+            // Already completed (the message was taken by an earlier poll):
+            // resolve immediately instead of panicking.
+            MessageOrId::Invalid => return Poll::Ready(Ok(())),
         };
         let guard = self.sender.inner.shared_state.lock();
         let (m, mut guard) = match try_send(m, guard) {
@@ -746,6 +788,25 @@ impl<T> Future for SendFuture<T> {
         }
         self.parked = Some(SendParked { id, signal });
         Poll::Pending
+    }
+}
+
+impl<T> Drop for SendFuture<T> {
+    fn drop(&mut self) {
+        // Cancellation: a pending send's queued entry is removed and its
+        // message destroyed, i.e. the message never leaves the owner while
+        // parked. If the entry is already
+        // gone, a receiver won the hand-off race and consumed the message;
+        // nothing is left to do. `Queue::remove` is the unique arbiter of
+        // that race, so the message can never be both dropped and delivered.
+        //
+        // Completed futures reach `Drop` with `parked == None` (every
+        // `Ready` return clears it), so the common path is a single
+        // discriminant check with no lock taken.
+        if let Some(parked) = self.parked.take() {
+            let mut guard = self.sender.inner.shared_state.lock();
+            guard.pending_sends.remove(parked.id);
+        }
     }
 }
 
@@ -801,7 +862,7 @@ impl<T> Future for RecvFuture<T> {
             return Poll::Ready(Err(RecvError::Disconnected));
         }
         let need_register = self.id.map_or(true, |id| !guard.pending_recvs.contains(id));
-        let new_id = if need_register {
+        if need_register {
             let id = guard.get_next_id();
             guard.pending_recvs.enqueue(
                 id,
@@ -810,14 +871,24 @@ impl<T> Future for RecvFuture<T> {
                     is_stream: self.stream,
                 },
             );
-            Some(id)
-        } else {
-            None
-        };
-        drop(guard);
-        if need_register {
-            self.id = new_id;
+            drop(guard);
+            self.id = Some(id);
             self.registered = true;
+        } else {
+            // Already registered: refresh the stored waker so a wake-up is
+            // never delivered to a stale waker when the future is re-polled
+            // by a different task (e.g. after `select!`).
+            let id = self.id.unwrap();
+            guard
+                .pending_recvs
+                .get_mut(id)
+                .map(|e| match e {
+                    PendingRecv::Waker { signal, .. } => {
+                        *signal = cx.waker().clone().into();
+                    }
+                    PendingRecv::Hook(_) => {}
+                });
+            drop(guard);
         }
         Poll::Pending
     }
@@ -836,7 +907,18 @@ impl<T> Drop for RecvFuture<T> {
 
 struct SenderInner<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
-    send_count: AtomicUsize,
+}
+
+// The channel is closed when the last `SenderInner` is dropped. Because every
+// `Sender` and every pending `SendFuture` holds an `Arc<SenderInner>`, this
+// fires exactly when all senders *and* all in-flight sends are gone — the same
+// point the old `send_count` tracked — but without a per-clone/drop atomic RMW
+// on the hot async path (a `send_async` per message used to pay a `fetch_add`
+// plus a `fetch_update`).
+impl<T> Drop for SenderInner<T> {
+    fn drop(&mut self) {
+        self.shared_state.lock().close();
+    }
 }
 
 /// The sending half of a channel.
@@ -854,7 +936,10 @@ impl<T> Clone for Sender<T> {
     /// Clones this sender. A [`Sender`] acts as a handle to the sending end of a channel. The remaining
     /// contents of the channel will only be cleaned up when all senders and the receiver have been dropped.
     fn clone(&self) -> Self {
-        self.inner.send_count.fetch_add(1, Ordering::Relaxed);
+        // No `send_count` bump: the `Arc` strong count already tracks live
+        // handles, and `SenderInner::drop` closes the channel when the last
+        // one is gone. This keeps `clone` (and thus `send_async`) a single
+        // relaxed refcount increment.
         Self {
             inner: Arc::clone(&self.inner),
         }
@@ -866,7 +951,6 @@ impl<T> Sender<T> {
         Self {
             inner: Arc::new(SenderInner {
                 shared_state,
-                send_count: AtomicUsize::new(1),
             })
         }
     }
@@ -892,6 +976,9 @@ impl<T> Sender<T> {
     ///
     /// The method returns an error if all receivers on the channel have been dropped.
     /// If the channel is bounded and is full, the returned future will yield to the async runtime.
+    ///
+    /// Note: dropping the returned future while it is pending cancels the send —
+    /// the message is removed from the channel and destroyed (see [`SendFuture`]).
     pub fn send_async(&self, m: T) -> SendFuture<T> {
         SendFuture {
             sender: self.clone(),
@@ -910,7 +997,7 @@ impl<T> Sender<T> {
         };
         let id = guard.get_next_id();
         let sync_signal = SyncSignal::new();
-        let spin = should_spin(guard.cap, self.inner.send_count.load(Ordering::Relaxed) as usize);
+        let spin = should_spin(guard.cap, Arc::strong_count(&self.inner));
         guard.pending_sends.enqueue(id, PendingSend::Parked(m, sync_signal.clone().into()));
         drop(guard);
         loop {
@@ -1007,7 +1094,10 @@ impl<T> Sender<T> {
     /// Sends a value into the channel, returning an error if the channel is full and the
     /// deadline has passed, or if all receivers have been dropped.
     pub fn send_deadline(&self, m: T, deadline: Instant) -> Result<(), SendTimeoutError<T>> {
-        self.send_timeout(m, deadline.checked_duration_since(Instant::now()).unwrap())
+        // A deadline already in the past behaves like a zero timeout: the send
+        // either succeeds if space is immediately available, or returns
+        // `Timeout` right away. (`saturating_duration_since` yields `ZERO`.)
+        self.send_timeout(m, deadline.saturating_duration_since(Instant::now()))
     }
 
     /// Returns `true` if the two senders belong to the same channel, and `false` otherwise.
@@ -1075,27 +1165,20 @@ impl<T> Sender<T> {
     }
 }
 
-impl<T> Drop for Sender<T> {
-    fn drop(&mut self) {
-        let _ = self
-            .inner
-            .send_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                let mut count = c;
-                if count > 0 {
-                    count -= 1;
-                    if count == 0 {
-                        self.inner.shared_state.lock().close();
-                    }
-                }
-                Some(count)
-            });
-    }
-}
+// No `Drop for Sender`: dropping a `Sender` releases its `Arc<SenderInner>`,
+// and `SenderInner::drop` closes the channel when the last handle is gone.
 
 struct ReceiverInner<T> {
     shared_state: Arc<Mutex<SharedState<T>>>,
-    recv_count: AtomicUsize,
+}
+
+// Mirror of `SenderInner::drop`: close the channel when the last receiver
+// handle (including any pending `RecvFuture`) is dropped, without a
+// per-clone/drop atomic RMW on the hot async path.
+impl<T> Drop for ReceiverInner<T> {
+    fn drop(&mut self) {
+        self.shared_state.lock().close();
+    }
 }
 
 /// The receiving end of a channel.
@@ -1122,7 +1205,8 @@ impl<T> Clone for Receiver<T> {
     /// Each message will only be received by a single receiver. This is useful for
     /// implementing work stealing for concurrent programs.
     fn clone(&self) -> Self {
-        self.inner.recv_count.fetch_add(1, Ordering::Relaxed);
+        // No `recv_count` bump: see `Sender::clone`; the `Arc` strong count
+        // tracks live handles and `ReceiverInner::drop` closes the channel.
         Self {
             inner: Arc::clone(&self.inner),
         }
@@ -1134,7 +1218,6 @@ impl<T> Receiver<T> {
         Self {
             inner: Arc::new(ReceiverInner {
                 shared_state,
-                recv_count: AtomicUsize::new(1),
             }),
         }
     }
@@ -1184,7 +1267,7 @@ impl<T> Receiver<T> {
                 let signal = SyncSignal::new();
                 let spin = should_spin(
                     guard.cap,
-                    self.inner.recv_count.load(Ordering::Relaxed) as usize,
+                    Arc::strong_count(&self.inner),
                 );
                 guard.pending_recvs.enqueue(
                     id,
@@ -1209,7 +1292,7 @@ impl<T> Receiver<T> {
                 slot: Mutex::new(None),
                 signal: SyncSignal::new(),
             });
-            let spin = should_spin(guard.cap, self.inner.recv_count.load(Ordering::Relaxed) as usize);
+            let spin = should_spin(guard.cap, Arc::strong_count(&self.inner));
             guard.pending_recvs.enqueue(id, PendingRecv::Hook(hook.clone()));
             drop(guard);
             // Park until woken. A sender that rendezvoused with us deposited the
@@ -1301,7 +1384,10 @@ impl<T> Receiver<T> {
     /// Receives a value from the channel associated with this receiver, blocking the current thread
     /// until a value is available or the deadline has passed.
     pub fn recv_deadline(&self, deadline: Instant) -> Result<T, RecvTimeoutError> {
-        self.recv_timeout(deadline.checked_duration_since(Instant::now()).unwrap())
+        // A deadline already in the past behaves like a zero timeout: a buffered
+        // message is still returned if one is available, otherwise `Timeout`
+        // is returned right away. (`saturating_duration_since` yields `ZERO`.)
+        self.recv_timeout(deadline.saturating_duration_since(Instant::now()))
     }
 
     /// Take all msgs currently sitting in the channel and produce an iterator over them. Unlike
@@ -1413,23 +1499,9 @@ impl<T> Receiver<T> {
     }
 }
 
-impl<T> Drop for Receiver<T> {
-    fn drop(&mut self) {
-        let _ = self
-            .inner
-            .recv_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                let mut count = c;
-                if count > 0 {
-                    count -= 1;
-                    if count == 0 {
-                        self.inner.shared_state.lock().close();
-                    }
-                }
-                Some(count)
-            });
-    }
-}
+// No `Drop for Receiver`: dropping a `Receiver` releases its
+// `Arc<ReceiverInner>`, and `ReceiverInner::drop` closes the channel when the
+// last handle is gone.
 
 /// An fixed-sized iterator over the msgs drained from a channel.
 #[derive(Debug)]
@@ -1446,6 +1518,10 @@ impl<'a, T> Iterator for Drain<'a, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.queue.pop_front()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.queue.len(), Some(self.queue.len()))
     }
 }
 

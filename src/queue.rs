@@ -101,6 +101,12 @@ impl<T> Queue<T> {
         self.map.get(&id)
     }
 
+    /// Mutable access to a queued value by id, without disturbing its queue
+    /// position. Used to update a parked entry's waker in place.
+    pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
+        self.map.get_mut(&id)
+    }
+
     pub fn remove(&mut self, id: usize) -> Option<(usize, T)> {
         if let Some(value) = self.map.remove(&id) {
             if let Some(index) = self.queue.iter().position(|&x| x == id) {

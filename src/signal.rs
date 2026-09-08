@@ -32,6 +32,24 @@ impl Clone for AsyncSignal {
     }
 }
 
+impl AsyncSignal {
+    /// Replace the stored waker with `waker` if they differ. Returns `true`
+    /// when the stored waker was replaced, `false` when `will_wake` said the
+    /// new waker is equivalent (common: same task re-polled).
+    ///
+    /// This is what makes re-polling a pending future with a *different*
+    /// waker safe: the future keeps its queue slot but the slot now points at
+    /// the new waker, so a wakeup is never delivered to a stale one.
+    #[inline(always)]
+    pub fn update_waker(&mut self, waker: &Waker) -> bool {
+        if self.waker.will_wake(waker) {
+            return false;
+        }
+        self.waker = waker.clone();
+        true
+    }
+}
+
 #[derive(Debug)]
 struct SyncSignalInner {
     thread: Thread,
@@ -189,6 +207,16 @@ impl Signal {
         match self {
             Self::Async(s) => s.waker.wake_by_ref(),
             Self::Sync(s) => s.notify(),
+        }
+    }
+
+    /// Replace the stored waker (async signals only). Returns `true` when the
+    /// waker was replaced. Sync signals have no waker; returns `false`.
+    #[inline(always)]
+    pub fn update_waker(&mut self, waker: &Waker) -> bool {
+        match self {
+            Self::Async(s) => s.update_waker(waker),
+            Self::Sync(_) => false,
         }
     }
 }
