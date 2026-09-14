@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Restored Apache-2.0 licensing alongside MIT (project is dual-licensed MIT OR Apache-2.0 again, matching the declaration that Cargo.toml/crates.io kept all along)
+
 ## Version 0.4.1
 - Performance: Added Sender/ReceiverInner types to consolidate two AtomicUsizes behind a single Arc (PR #6, thanks to [cod10129](https://github.com/cod10129))
 - Fixed send methods to properly check completion status before returning success

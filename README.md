@@ -5,7 +5,7 @@ A safe async/sync multi-producer multi-consumer channel.
 ![Github Actions](https://github.com/mahdi-shojaee/loole/actions/workflows/rust.yml/badge.svg?branch=master)
 [![Documentation](https://docs.rs/loole/badge.svg)](https://docs.rs/loole)
 [![Cargo](https://img.shields.io/crates/v/loole.svg)](https://crates.io/crates/loole)
-[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/mahdi-shojaee/loole)
+[![License](https://img.shields.io/crates/l/loole.svg)](https://github.com/mahdi-shojaee/loole#license)
 
 ```rust
 // Async — requires an async runtime such as tokio
@@ -119,6 +119,17 @@ Latency is the per-message round-trip time in nanoseconds (lower is better) for 
 
 ## License
 
-This project is licensed under the [MIT license].
+Licensed under either of
 
-[MIT license]: https://github.com/mahdi-shojaee/loole/blob/master/LICENSE
+ * Apache License, Version 2.0
+   ([LICENSE-APACHE](LICENSE-APACHE) or https://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license
+   ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
+
+at your option.
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.

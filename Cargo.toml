@@ -11,7 +11,7 @@ repository = "https://github.com/mahdi-shojaee/loole"
 documentation = "https://docs.rs/loole"
 keywords = ["async", "thread", "channel", "mpmc", "mpsc"]
 categories = ["concurrency", "data-structures"]
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 exclude = ["/.*"]
 
