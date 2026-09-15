@@ -155,3 +155,16 @@ fn recv_deadline_in_the_past_still_returns_buffered_message() {
     tx.send(1).unwrap();
     assert_eq!(rx.recv_deadline(Instant::now() - ms(100)), Ok(1));
 }
+
+#[test]
+fn send_timeout_huge_duration_does_not_panic() {
+    // `Instant::now() + timeout` overflows for extreme durations; the send
+    // must wait (effectively) forever instead of panicking.
+    let (tx, rx) = bounded(1);
+    tx.send(1).unwrap(); // full: the send below parks
+    let h = thread::spawn(move || tx.send_timeout(2, Duration::MAX));
+    sync_sleep(100);
+    assert_eq!(rx.recv(), Ok(1));
+    assert_eq!(h.join().unwrap(), Ok(()));
+    assert_eq!(rx.recv(), Ok(2));
+}

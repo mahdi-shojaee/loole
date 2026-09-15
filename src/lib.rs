@@ -466,29 +466,8 @@ fn try_send<T>(m: T, mut guard: MutexGuard<'_, SharedState<T>>) -> TrySendResult
             guard.queue.push_back(m);
         }
 
-        // Wake waiting receivers (queue-backed message). A stream receiver is
-        // not a reliable wake target, so keep waking receivers until a
-        // non-stream one is woken or no receivers are left.
-        let mut to_wake = Vec::new();
-        loop {
-            match guard.pending_recvs.dequeue() {
-                Some((_, PendingRecv::Hook(hook))) => {
-                    to_wake.push(Signal::Sync(hook.signal.clone()));
-                    break;
-                }
-                Some((_, PendingRecv::Waker { signal, is_stream })) => {
-                    to_wake.push(signal);
-                    if !is_stream {
-                        break;
-                    }
-                }
-                None => break,
-            }
-        }
-        drop(guard);
-        for e in to_wake {
-            e.wake();
-        }
+        // Wake waiting receivers (queue-backed message).
+        wake_next_pending_recv(guard);
         return TrySendResult::Ok;
     } else if guard.cap == Some(0) {
         if let Some((_, e)) = guard.pending_recvs.dequeue() {
@@ -510,6 +489,35 @@ fn try_send<T>(m: T, mut guard: MutexGuard<'_, SharedState<T>>) -> TrySendResult
         }
     }
     TrySendResult::Full(m, guard)
+}
+
+/// Wakes the next parked receiver(s) after a message has been left for them
+/// in the channel (queue entry or cap-0 gift). A stream receiver is not a
+/// reliable wake target (its future can outlive the task that was polling
+/// it), so we keep waking receivers until a non-stream one is woken or no
+/// receivers are left. Takes the lock guard by value: the channel lock is
+/// released before any signal is woken.
+fn wake_next_pending_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) {
+    let mut to_wake = Vec::new();
+    loop {
+        match guard.pending_recvs.dequeue() {
+            Some((_, PendingRecv::Hook(hook))) => {
+                to_wake.push(Signal::Sync(hook.signal.clone()));
+                break;
+            }
+            Some((_, PendingRecv::Waker { signal, is_stream })) => {
+                to_wake.push(signal);
+                if !is_stream {
+                    break;
+                }
+            }
+            None => break,
+        }
+    }
+    drop(guard);
+    for e in to_wake {
+        e.wake();
+    }
 }
 
 enum TryRecvResult<'a, T> {
@@ -820,6 +828,12 @@ pub struct RecvFuture<T> {
     receiver: Receiver<T>,
     stream: bool,
     registered: bool,
+    /// Whether the last poll resolved (`Poll::Ready`). A dropped future whose
+    /// registration is missing from the channel falls in one of two cases:
+    /// it resolved (nothing to do) or a sender claimed it and the future was
+    /// dropped before being re-polled (a compensating wake is owed to the
+    /// next parked receiver). `Drop` uses this flag to tell them apart.
+    completed: bool,
 }
 
 impl<T> RecvFuture<T> {
@@ -853,12 +867,26 @@ impl<T> Future for RecvFuture<T> {
     type Output = Result<T, RecvError>;
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut guard = match try_recv(self.receiver.inner.shared_state.lock()) {
-            TryRecvResult::Ok(r) => return Poll::Ready(Ok(r)),
-            TryRecvResult::Disconnected => return Poll::Ready(Err(RecvError::Disconnected)),
+        // A fresh poll has no resolved outcome yet; `Drop` relies on this to
+        // tell an unpolled-after-claim drop from a completed one. Matters for
+        // streams, which keep polling after each resolved item.
+        self.completed = false;
+        // Lock through a cloned Arc so the guard borrows a local instead of
+        // `self`: the poll body updates `self` fields while holding it.
+        let shared = self.receiver.inner.shared_state.clone();
+        let mut guard = match try_recv(shared.lock()) {
+            TryRecvResult::Ok(r) => {
+                self.completed = true;
+                return Poll::Ready(Ok(r));
+            }
+            TryRecvResult::Disconnected => {
+                self.completed = true;
+                return Poll::Ready(Err(RecvError::Disconnected));
+            }
             TryRecvResult::Empty(guard) => guard,
         };
         if guard.closed {
+            self.completed = true;
             return Poll::Ready(Err(RecvError::Disconnected));
         }
         let need_register = self.id.map_or(true, |id| !guard.pending_recvs.contains(id));
@@ -899,7 +927,21 @@ impl<T> Drop for RecvFuture<T> {
         if self.registered {
             if let Some(id) = self.id {
                 let mut guard = self.receiver.inner.shared_state.lock();
-                guard.pending_recvs.remove(id);
+                if guard.pending_recvs.remove(id).is_none()
+                    && !self.completed
+                    && (!guard.queue.is_empty() || guard.pending_sends.len() != 0)
+                {
+                    // A sender dequeued our registration and woke us, but we
+                    // were dropped without being re-polled (e.g. a losing
+                    // `select!` branch or an aborted task). The delivery it
+                    // left behind (queue entry or cap-0 gift) is still in the
+                    // channel, so wake the next parked receiver — otherwise
+                    // it could sleep until an unrelated send/close arrives.
+                    // (`pending_sends` non-empty implies a deliverable gift:
+                    // at cap>0 parked sends only exist while the queue is
+                    // full, which the first disjunct already covers.)
+                    wake_next_pending_recv(guard);
+                }
             }
         }
     }
@@ -1028,7 +1070,12 @@ impl<T> Sender<T> {
                 }
                 return Ok(());
             }
-            // Spurious wake while still pending: wait again.
+            // Unreachable by construction: `wait()` parks until `notify()`,
+            // and every notify of a synced send is paired with either
+            // `mark_taken()` (checked above) or channel close (checked
+            // above). Note that `SyncSignal::wait` parks only once — should
+            // this loop ever legitimately need to wait again, the signal
+            // must be replaced with a fresh one or it will spin.
         }
     }
 
@@ -1047,30 +1094,37 @@ impl<T> Sender<T> {
         let sync_signal = SyncSignal::new();
         guard.pending_sends.enqueue(id, PendingSend::Parked(m, sync_signal.clone().into()));
         drop(guard);
-        let deadline = Instant::now() + timeout;
+        // `None` on overflow (e.g. `Duration::MAX`): the timeout is
+        // effectively infinite, so wait without a deadline below.
+        let deadline = Instant::now().checked_add(timeout);
         loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                // Timeout elapsed. Report Timeout if the message is still here,
-                // Ok if a receiver consumed it in the meantime.
-                let mut guard = self.inner.shared_state.lock();
-                if !guard.pending_sends.contains(id) {
-                    return Ok(());
-                }
-                if guard.closed {
-                    let e = guard.pending_sends.remove(id).unwrap();
-                    if let (_, PendingSend::Parked(m, _)) = e {
-                        return Err(SendTimeoutError::Disconnected(m));
+            match deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        // Timeout elapsed. Report Timeout if the message is still here,
+                        // Ok if a receiver consumed it in the meantime.
+                        let mut guard = self.inner.shared_state.lock();
+                        if !guard.pending_sends.contains(id) {
+                            return Ok(());
+                        }
+                        if guard.closed {
+                            let e = guard.pending_sends.remove(id).unwrap();
+                            if let (_, PendingSend::Parked(m, _)) = e {
+                                return Err(SendTimeoutError::Disconnected(m));
+                            }
+                            return Ok(());
+                        }
+                        let e = guard.pending_sends.remove(id).unwrap();
+                        if let (_, PendingSend::Parked(m, _)) = e {
+                            return Err(SendTimeoutError::Timeout(m));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
+                    let _ = sync_signal.wait_timeout(remaining);
                 }
-                let e = guard.pending_sends.remove(id).unwrap();
-                if let (_, PendingSend::Parked(m, _)) = e {
-                    return Err(SendTimeoutError::Timeout(m));
-                }
-                return Ok(());
+                None => sync_signal.wait(),
             }
-            let _ = sync_signal.wait_timeout(remaining);
             if sync_signal.is_taken() {
                 // Consumed by a receiver; no re-lock needed.
                 return Ok(());
@@ -1087,7 +1141,11 @@ impl<T> Sender<T> {
                 }
                 return Ok(());
             }
-            // Still pending (spurious wake or timeout): loop to re-check deadline.
+            // Still pending after the wait (the deadline expired while we
+            // were parked): loop to hit the timeout check at the top.
+            // `wait_timeout` parks until notified-or-elapsed, so this does
+            // not spin; in the deadline-free (overflow) case `wait()` was
+            // one-shot but every notify is paired with taken/close above.
         }
     }
 
@@ -1246,6 +1304,7 @@ impl<T> Receiver<T> {
             receiver: self.clone(),
             stream: false,
             registered: false,
+            completed: false,
         }
     }
 
@@ -1370,9 +1429,16 @@ impl<T> Receiver<T> {
             if elapsed >= timeout {
                 let mut guard = self.inner.shared_state.lock();
                 guard.pending_recvs.remove(id);
-                // A sender may have deposited into our slot just as we timed out;
-                // grab it to avoid losing the message.
+                drop(guard);
+                // A sender may have deposited into our slot just as we timed
+                // out; grab it to avoid losing the message.
                 if let Some(msg) = hook.take_msg() {
+                    return Ok(msg);
+                }
+                // A sender may instead have delivered through the queue at
+                // the deadline (the general wake path notifies hooks without
+                // a deposit); grab it, mirroring the cap-0 arm above.
+                if let TryRecvResult::Ok(msg) = try_recv(self.inner.shared_state.lock()) {
                     return Ok(msg);
                 }
                 return Err(RecvTimeoutError::Timeout);
@@ -1485,6 +1551,7 @@ impl<T> Receiver<T> {
             receiver: self.clone(),
             stream: true,
             registered: false,
+            completed: false,
         })
     }
 
@@ -1495,6 +1562,7 @@ impl<T> Receiver<T> {
             receiver: self,
             stream: true,
             registered: false,
+            completed: false,
         })
     }
 }
@@ -1615,6 +1683,7 @@ impl<T> Clone for RecvStream<T> {
             receiver: self.0.receiver.clone(),
             stream: true,
             registered: false,
+            completed: false,
         })
     }
 }
