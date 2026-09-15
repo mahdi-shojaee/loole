@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## Version 0.5.0
+- Performance: rewrote channel internals — wake one parked receiver per send instead of all, plain VecDeque message buffer, rendezvous hand-off for parked sync receivers, lazy pending-queue ids, `taken`-flag send confirmation, spin-then-park sync ops, identity-hashed pending queues, and close detection via `Arc` drop instead of counters
+- Behavior change: dropping a pending `SendFuture` now cancels the send (the queued message is removed and destroyed) instead of delivering it anyway
+- Fixed: polling a `SendFuture` after completion no longer panics
+- Fixed: past deadlines given to `send_deadline`/`recv_deadline` behave like a zero timeout instead of panicking
+- Fixed send/recv edge-case semantics (A1-A5) and added coverage-gap tests (cancellation, close, deadline, drain, errors, handles, select-send, sink)
+- Fixed: a `RecvFuture` dropped after a sender claimed its registration but before being re-polled (e.g. a losing `select!` branch) now wakes the next parked receiver, so the delivered message is not stranded while receivers sleep
+- Fixed: `send_timeout` with extreme durations (e.g. `Duration::MAX`) no longer panics on `Instant` overflow
+- Fixed: `recv_timeout` no longer misses a message delivered exactly at the deadline in rendezvous-with-hook configurations
+- Overhauled benchmarks: criterion-driven suite with auto-updated charts
 - Restored Apache-2.0 licensing alongside MIT (project is dual-licensed MIT OR Apache-2.0 again, matching the declaration that Cargo.toml/crates.io kept all along)
 
 ## Version 0.4.1
