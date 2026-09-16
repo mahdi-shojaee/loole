@@ -866,56 +866,52 @@ impl<T> RecvFuture<T> {
 impl<T> Future for RecvFuture<T> {
     type Output = Result<T, RecvError>;
 
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // `get_mut` (safe: RecvFuture is Unpin) gives direct field access so
+        // the guard below borrows only `receiver`, leaving `completed` etc.
+        // writable — no per-poll `Arc` clone of the shared state.
+        let this = self.get_mut();
         // A fresh poll has no resolved outcome yet; `Drop` relies on this to
         // tell an unpolled-after-claim drop from a completed one. Matters for
         // streams, which keep polling after each resolved item.
-        self.completed = false;
-        // Lock through a cloned Arc so the guard borrows a local instead of
-        // `self`: the poll body updates `self` fields while holding it.
-        let shared = self.receiver.inner.shared_state.clone();
-        let mut guard = match try_recv(shared.lock()) {
+        this.completed = false;
+        let mut guard = match try_recv(this.receiver.inner.shared_state.lock()) {
             TryRecvResult::Ok(r) => {
-                self.completed = true;
+                this.completed = true;
                 return Poll::Ready(Ok(r));
             }
             TryRecvResult::Disconnected => {
-                self.completed = true;
+                this.completed = true;
                 return Poll::Ready(Err(RecvError::Disconnected));
             }
             TryRecvResult::Empty(guard) => guard,
         };
         if guard.closed {
-            self.completed = true;
+            this.completed = true;
             return Poll::Ready(Err(RecvError::Disconnected));
         }
-        let need_register = self.id.map_or(true, |id| !guard.pending_recvs.contains(id));
+        let need_register = this.id.map_or(true, |id| !guard.pending_recvs.contains(id));
         if need_register {
             let id = guard.get_next_id();
             guard.pending_recvs.enqueue(
                 id,
                 PendingRecv::Waker {
                     signal: cx.waker().clone().into(),
-                    is_stream: self.stream,
+                    is_stream: this.stream,
                 },
             );
             drop(guard);
-            self.id = Some(id);
-            self.registered = true;
+            this.id = Some(id);
+            this.registered = true;
         } else {
             // Already registered: refresh the stored waker so a wake-up is
             // never delivered to a stale waker when the future is re-polled
-            // by a different task (e.g. after `select!`).
-            let id = self.id.unwrap();
-            guard
-                .pending_recvs
-                .get_mut(id)
-                .map(|e| match e {
-                    PendingRecv::Waker { signal, .. } => {
-                        *signal = cx.waker().clone().into();
-                    }
-                    PendingRecv::Hook(_) => {}
-                });
+            // by a different task (e.g. after `select!`). `update_waker`
+            // skips the clone when the task re-polled with the same waker.
+            let id = this.id.unwrap();
+            if let Some(PendingRecv::Waker { signal, .. }) = guard.pending_recvs.get_mut(id) {
+                signal.update_waker(cx.waker());
+            }
             drop(guard);
         }
         Poll::Pending
