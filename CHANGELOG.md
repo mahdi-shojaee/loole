@@ -1,6 +1,10 @@
 # Changelog
 
 ## Version 0.5.0
+- Performance: `send_async`/`recv_async` (and `sink`/`stream`) now return futures that borrow the sender/receiver instead of cloning it, removing four atomic reference-count operations per message (SPSC async-async bounded(100): up to +39% at 32 B, +7% at 16384 B on P-cores)
+- Added `Sender::into_send_async` and `Receiver::into_recv_async`: owned `'static` futures that keep the channel open until dropped, for `tokio::spawn` and stored futures (the previous `send_async`/`recv_async` behavior)
+- Behavior change: a borrowed `SendFuture`/`RecvFuture` no longer keeps the channel open — dropping all senders/receivers while one is pending closes the channel and the future resolves with an error
+- `SendSink`/`RecvStream` and `Sender::sink`/`Receiver::stream` are now lifetime-parameterized (`SendSink<'a, T>`, `RecvStream<'a, T>`); `into_sink`/`into_stream` are unchanged in behavior
 - Performance: rewrote channel internals — wake one parked receiver per send instead of all, plain VecDeque message buffer, rendezvous hand-off for parked sync receivers, lazy pending-queue ids, `taken`-flag send confirmation, spin-then-park sync ops, identity-hashed pending queues, and close detection via `Arc` drop instead of counters
 - Behavior change: dropping a pending `SendFuture` now cancels the send (the queued message is removed and destroyed) instead of delivering it anyway
 - Fixed: polling a `SendFuture` after completion no longer panics

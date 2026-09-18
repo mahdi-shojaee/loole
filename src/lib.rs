@@ -43,6 +43,7 @@ mod mutex;
 mod queue;
 mod signal;
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::future::Future;
@@ -607,10 +608,17 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T
 ///
 /// Completed futures (including those resolved with an error) drop without
 /// touching the channel: no lock is taken.
+///
+/// The future borrows the sender it was created from (see
+/// [`Sender::send_async`]): creating it performs no atomic reference-count
+/// operation, unlike cloning the sender. Use [`Sender::into_send_async`] for
+/// an owned `'static` future (e.g. to `tokio::spawn` it directly). A borrowed
+/// future does not keep the channel open: dropping all senders while it is
+/// pending closes the channel and the send resolves with an error.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
-pub struct SendFuture<T> {
-    sender: Sender<T>,
+pub struct SendFuture<'a, T> {
+    sender: Cow<'a, Sender<T>>,
     msg: MessageOrId<T>,
     /// Set once the send has parked: the id of the `pending_sends` entry and
     /// the waker signal that was registered with it. Cleared on every
@@ -624,7 +632,7 @@ struct SendParked {
     signal: Signal,
 }
 
-impl<T> SendFuture<T> {
+impl<'a, T> SendFuture<'a, T> {
     /// See [`Sender::is_closed`].
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
@@ -654,9 +662,9 @@ impl<T> SendFuture<T> {
 /// A sink that allows sending values into a channel.
 ///
 /// Can be created via [`Sender::sink`] or [`Sender::into_sink`].
-pub struct SendSink<T>(SendFuture<T>);
+pub struct SendSink<'a, T>(SendFuture<'a, T>);
 
-impl<T> SendSink<T> {
+impl<'a, T> SendSink<'a, T> {
     /// Returns a clone of a sending half of the channel of this sink.
     pub fn sender(&self) -> &Sender<T> {
         &self.0.sender
@@ -688,18 +696,18 @@ impl<T> SendSink<T> {
     }
 
     /// Returns whether the SendSinks are belong to the same channel.
-    pub fn same_channel(&self, other: &Self) -> bool {
+    pub fn same_channel(&self, other: &SendSink<'_, T>) -> bool {
         self.0.sender.same_channel(&other.0.sender)
     }
 }
 
-impl<T> Debug for SendSink<T> {
+impl<T> Debug for SendSink<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SendSink").finish()
     }
 }
 
-impl<T> Sink<T> for SendSink<T> {
+impl<'a, T> Sink<T> for SendSink<'a, T> {
     type Error = SendError<T>;
 
     fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -737,8 +745,8 @@ impl<T> Sink<T> for SendSink<T> {
     }
 }
 
-impl<T> Clone for SendSink<T> {
-    fn clone(&self) -> SendSink<T> {
+impl<'a, T> Clone for SendSink<'a, T> {
+    fn clone(&self) -> SendSink<'a, T> {
         SendSink(SendFuture {
             sender: self.0.sender.clone(),
             msg: MessageOrId::Invalid,
@@ -759,9 +767,9 @@ impl<T> MessageOrId<T> {
     }
 }
 
-impl<T> std::marker::Unpin for SendFuture<T> {}
+impl<'a, T> std::marker::Unpin for SendFuture<'a, T> {}
 
-impl<T> Future for SendFuture<T> {
+impl<'a, T> Future for SendFuture<'a, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -831,7 +839,7 @@ impl<T> Future for SendFuture<T> {
     }
 }
 
-impl<T> Drop for SendFuture<T> {
+impl<'a, T> Drop for SendFuture<'a, T> {
     fn drop(&mut self) {
         // Cancellation: a pending send's queued entry is removed and its
         // message destroyed, i.e. the message never leaves the owner while
@@ -853,11 +861,17 @@ impl<T> Drop for SendFuture<T> {
 /// A future that allows asynchronously receiving a message.
 /// This future will resolve to a message when a message is available on the channel,
 /// or to an error if the channel is closed.
+///
+/// The future borrows the receiver it was created from (see
+/// [`Receiver::recv_async`]): creating it performs no atomic reference-count
+/// operation. Use [`Receiver::into_recv_async`] for an owned `'static`
+/// future. A borrowed future does not keep the channel open: dropping all
+/// receivers while it is pending closes the channel.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
-pub struct RecvFuture<T> {
+pub struct RecvFuture<'a, T> {
     id: Option<usize>,
-    receiver: Receiver<T>,
+    receiver: Cow<'a, Receiver<T>>,
     stream: bool,
     registered: bool,
     /// Whether the last poll resolved (`Poll::Ready`). A dropped future whose
@@ -868,7 +882,7 @@ pub struct RecvFuture<T> {
     completed: bool,
 }
 
-impl<T> RecvFuture<T> {
+impl<'a, T> RecvFuture<'a, T> {
     /// See [`Receiver::is_closed`].
     pub fn is_closed(&self) -> bool {
         self.receiver.is_closed()
@@ -895,7 +909,7 @@ impl<T> RecvFuture<T> {
     }
 }
 
-impl<T> Future for RecvFuture<T> {
+impl<'a, T> Future for RecvFuture<'a, T> {
     type Output = Result<T, RecvError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -950,7 +964,7 @@ impl<T> Future for RecvFuture<T> {
     }
 }
 
-impl<T> Drop for RecvFuture<T> {
+impl<'a, T> Drop for RecvFuture<'a, T> {
     fn drop(&mut self) {
         if self.registered {
             if let Some(id) = self.id {
@@ -980,11 +994,12 @@ struct SenderInner<T> {
 }
 
 // The channel is closed when the last `SenderInner` is dropped. Because every
-// `Sender` and every pending `SendFuture` holds an `Arc<SenderInner>`, this
-// fires exactly when all senders *and* all in-flight sends are gone — the same
-// point the old `send_count` tracked — but without a per-clone/drop atomic RMW
-// on the hot async path (a `send_async` per message used to pay a `fetch_add`
-// plus a `fetch_update`).
+// `Sender` and every pending *owned* `SendFuture` (see
+// [`Sender::into_send_async`]) holds an `Arc<SenderInner>`, this fires exactly
+// when all senders *and* all in-flight owned sends are gone — the same point
+// the old `send_count` tracked — but without a per-clone/drop atomic RMW on
+// the hot async path (a `send_async` per message used to pay a `fetch_add`
+// plus a `fetch_update`, and now borrows instead of cloning).
 impl<T> Drop for SenderInner<T> {
     fn drop(&mut self) {
         self.shared_state.lock().close();
@@ -1045,11 +1060,32 @@ impl<T> Sender<T> {
     /// The method returns an error if all receivers on the channel have been dropped.
     /// If the channel is bounded and is full, the returned future will yield to the async runtime.
     ///
+    /// The returned future borrows the sender: creating it performs no atomic
+    /// reference-count operation. It does not keep the channel open — dropping
+    /// all senders while it is pending closes the channel (see
+    /// [`Sender::into_send_async`] for an owned future that keeps the channel
+    /// open and can be spawned onto a runtime).
+    ///
     /// Note: dropping the returned future while it is pending cancels the send —
     /// the message is removed from the channel and destroyed (see [`SendFuture`]).
-    pub fn send_async(&self, m: T) -> SendFuture<T> {
+    pub fn send_async(&self, m: T) -> SendFuture<'_, T> {
         SendFuture {
-            sender: self.clone(),
+            sender: Cow::Borrowed(self),
+            msg: MessageOrId::Message(m),
+            parked: None,
+        }
+    }
+
+    /// Asynchronously send a value into the channel, returning an owned
+    /// `'static` future that keeps the channel open until it is dropped.
+    ///
+    /// Unlike [`Sender::send_async`], the returned future owns a clone of the
+    /// sender, so it can be spawned onto a runtime (`tokio::spawn`) or stored
+    /// beyond the sender's lifetime. Otherwise its completion and cancellation
+    /// semantics are identical.
+    pub fn into_send_async<'a>(self, m: T) -> SendFuture<'a, T> {
+        SendFuture {
+            sender: Cow::Owned(self),
             msg: MessageOrId::Message(m),
             parked: None,
         }
@@ -1235,18 +1271,21 @@ impl<T> Sender<T> {
     }
 
     /// Returns a sink that can be used to send values into the channel.
-    pub fn sink(&self) -> SendSink<T> {
+    ///
+    /// The sink borrows the sender: creating it performs no atomic
+    /// reference-count operation.
+    pub fn sink(&self) -> SendSink<'_, T> {
         SendSink(SendFuture {
-            sender: self.clone(),
+            sender: Cow::Borrowed(self),
             msg: MessageOrId::Invalid,
             parked: None,
         })
     }
 
     /// Converts this sender into a sink that can be used to send values into the channel.
-    pub fn into_sink(self) -> SendSink<T> {
+    pub fn into_sink<'a>(self) -> SendSink<'a, T> {
         SendSink(SendFuture {
-            sender: self,
+            sender: Cow::Owned(self),
             msg: MessageOrId::Invalid,
             parked: None,
         })
@@ -1261,8 +1300,9 @@ struct ReceiverInner<T> {
 }
 
 // Mirror of `SenderInner::drop`: close the channel when the last receiver
-// handle (including any pending `RecvFuture`) is dropped, without a
-// per-clone/drop atomic RMW on the hot async path.
+// handle (including any pending owned `RecvFuture`, see
+// [`Receiver::into_recv_async`]) is dropped, without a per-clone/drop atomic
+// RMW on the hot async path.
 impl<T> Drop for ReceiverInner<T> {
     fn drop(&mut self) {
         self.shared_state.lock().close();
@@ -1326,10 +1366,33 @@ impl<T> Receiver<T> {
     ///
     /// This method returns a future that will be resolved with the value received from the channel,
     /// or with an error if the channel is closed.
-    pub fn recv_async(&self) -> RecvFuture<T> {
+    ///
+    /// The returned future borrows the receiver: creating it performs no atomic
+    /// reference-count operation. It does not keep the channel open — dropping
+    /// all receivers while it is pending closes the channel (see
+    /// [`Receiver::into_recv_async`] for an owned future that keeps the
+    /// channel open and can be spawned onto a runtime).
+    pub fn recv_async(&self) -> RecvFuture<'_, T> {
         RecvFuture {
             id: None,
-            receiver: self.clone(),
+            receiver: Cow::Borrowed(self),
+            stream: false,
+            registered: false,
+            completed: false,
+        }
+    }
+
+    /// Asynchronously receive a value from the channel, returning an owned
+    /// `'static` future that keeps the channel open until it is dropped.
+    ///
+    /// Unlike [`Receiver::recv_async`], the returned future owns a clone of
+    /// the receiver, so it can be spawned onto a runtime (`tokio::spawn`) or
+    /// stored beyond the receiver's lifetime. Otherwise its completion and
+    /// cancellation semantics are identical.
+    pub fn into_recv_async<'a>(self) -> RecvFuture<'a, T> {
+        RecvFuture {
+            id: None,
+            receiver: Cow::Owned(self),
             stream: false,
             registered: false,
             completed: false,
@@ -1574,10 +1637,13 @@ impl<T> Receiver<T> {
     }
 
     /// Returns a stream of messages from the channel.
-    pub fn stream(&self) -> RecvStream<T> {
+    ///
+    /// The stream borrows the receiver: creating it performs no atomic
+    /// reference-count operation.
+    pub fn stream(&self) -> RecvStream<'_, T> {
         RecvStream(RecvFuture {
             id: None,
-            receiver: self.clone(),
+            receiver: Cow::Borrowed(self),
             stream: true,
             registered: false,
             completed: false,
@@ -1585,10 +1651,10 @@ impl<T> Receiver<T> {
     }
 
     /// Convert this receiver into a stream that allows asynchronously receiving messages from the channel.
-    pub fn into_stream(self) -> RecvStream<T> {
+    pub fn into_stream<'a>(self) -> RecvStream<'a, T> {
         RecvStream(RecvFuture {
             id: None,
-            receiver: self,
+            receiver: Cow::Owned(self),
             stream: true,
             registered: false,
             completed: false,
@@ -1665,9 +1731,9 @@ impl<T> IntoIterator for Receiver<T> {
 /// A stream which allows asynchronously receiving messages.
 ///
 /// Can be created via [`Receiver::stream`] or [`Receiver::into_stream`].
-pub struct RecvStream<T>(RecvFuture<T>);
+pub struct RecvStream<'a, T>(RecvFuture<'a, T>);
 
-impl<T> RecvStream<T> {
+impl<T> RecvStream<'_, T> {
     /// See [`Receiver::is_closed`].
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
@@ -1694,19 +1760,19 @@ impl<T> RecvStream<T> {
     }
 
     /// Returns whether the SendSinks are belong to the same channel.
-    pub fn same_channel(&self, other: &Self) -> bool {
+    pub fn same_channel(&self, other: &RecvStream<'_, T>) -> bool {
         self.0.receiver.same_channel(&other.0.receiver)
     }
 }
 
-impl<T> std::fmt::Debug for RecvStream<T> {
+impl<T> std::fmt::Debug for RecvStream<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RecvStream").finish()
     }
 }
 
-impl<T> Clone for RecvStream<T> {
-    fn clone(&self) -> RecvStream<T> {
+impl<'a, T> Clone for RecvStream<'a, T> {
+    fn clone(&self) -> RecvStream<'a, T> {
         RecvStream(RecvFuture {
             id: None,
             receiver: self.0.receiver.clone(),
@@ -1717,7 +1783,7 @@ impl<T> Clone for RecvStream<T> {
     }
 }
 
-impl<T> Stream for RecvStream<T> {
+impl<'a, T> Stream for RecvStream<'a, T> {
     type Item = T;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

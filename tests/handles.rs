@@ -37,11 +37,10 @@ fn dropping_one_of_several_cloned_receivers_does_not_close() {
 
 #[test]
 fn send_future_keeps_channel_open_until_dropped() {
-    // `send_async` clones the sender into the future; a pending future keeps
+    // `into_send_async` owns a clone of the sender; a pending future keeps
     // the channel open even after the original sender is dropped.
     let (tx, rx) = bounded::<u8>(1);
-    let fut = tx.send_async(1);
-    drop(tx);
+    let fut = tx.into_send_async(1);
     assert!(!rx.is_closed());
     drop(fut);
     // The future was the last sender handle.
@@ -50,11 +49,10 @@ fn send_future_keeps_channel_open_until_dropped() {
 
 #[test]
 fn recv_future_keeps_channel_open_until_dropped() {
-    // `recv_async` clones the receiver into the future; a pending future
+    // `into_recv_async` owns a clone of the receiver; a pending future
     // keeps the channel open even after the original receiver is dropped.
     let (tx, rx) = unbounded::<u8>();
-    let fut = rx.recv_async();
-    drop(rx);
+    let fut = rx.into_recv_async();
     assert!(!tx.is_closed());
     drop(fut);
     // The future was the last receiver handle.
@@ -64,8 +62,7 @@ fn recv_future_keeps_channel_open_until_dropped() {
 #[test]
 fn recv_stream_keeps_channel_open_until_dropped() {
     let (tx, rx) = unbounded::<u8>();
-    let stream = rx.stream();
-    drop(rx);
+    let stream = rx.into_stream();
     assert!(!tx.is_closed());
     drop(stream);
     assert!(tx.is_closed());

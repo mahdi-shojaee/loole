@@ -147,9 +147,8 @@ async fn sender_into_sink_moves_ownership() {
 #[tokio::test]
 async fn cloned_sink_keeps_channel_open() {
     let (tx, rx) = unbounded::<i32>();
-    let mut sink1 = tx.sink();
+    let mut sink1 = tx.into_sink();
     let mut sink2 = sink1.clone();
-    drop(tx);
 
     sink1.send(1).await.unwrap();
     sink2.send(2).await.unwrap();

@@ -157,7 +157,7 @@ fn recv_after_manual_close_by_receiver_fails_immediately() {
 #[tokio::test]
 async fn close_wakes_pending_recv_future() {
     let (tx, rx) = bounded::<()>(1);
-    let recv_task = tokio::spawn(rx.recv_async());
+    let recv_task = tokio::spawn(rx.into_recv_async());
     tokio::time::sleep(ms(100)).await;
     assert!(tx.close());
     assert_eq!(recv_task.await.unwrap(), Err(RecvError::Disconnected));
@@ -167,7 +167,7 @@ async fn close_wakes_pending_recv_future() {
 async fn close_wakes_pending_send_future() {
     let (tx, rx) = bounded(1);
     tx.send_async(1).await.unwrap();
-    let send_task = tokio::spawn(tx.send_async(2));
+    let send_task = tokio::spawn(tx.into_send_async(2));
     tokio::time::sleep(ms(100)).await;
     assert!(rx.close());
     assert_eq!(send_task.await.unwrap(), Err(SendError(2)));
