@@ -222,11 +222,31 @@ fn criterion_benchmarks(c: &mut Criterion) {
             exit(2);
         }
     }
-    if cfg.metric.includes_throughput() {
+    let ran_throughput = cfg.metric.includes_throughput();
+    if ran_throughput {
         throughput_groups(c, &cfg, overrides);
     }
     if cfg.metric.includes_latency() {
+        // Cool down between the throughput and latency suites when asked:
+        // high-churn throughput cells heat the CPU and the latency cells
+        // would otherwise measure throttled performance.
+        if ran_throughput {
+            cooldown(&cfg);
+        }
         latency_group(c, &cfg, overrides);
+    }
+}
+
+/// Idles `cfg.cooldown_secs` between benchmark groups so the machine cools
+/// down (no-op when zero). Sleeps between groups only — criterion owns the
+/// order of cells inside a group.
+fn cooldown(cfg: &Config) {
+    if cfg.cooldown_secs > 0 {
+        eprintln!(
+            "cooling down {}s before the next benchmark group…",
+            cfg.cooldown_secs
+        );
+        std::thread::sleep(Duration::from_secs(cfg.cooldown_secs));
     }
 }
 
@@ -256,7 +276,11 @@ fn topologies(cfg: &Config) -> [(Topology, usize, usize); 3] {
 
 fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) {
     let gid = group_id(MetricKind::Throughput, cfg.message_size, cfg.messages_no);
-    for (topology, senders, receivers) in topologies(cfg) {
+    for (i, (topology, senders, receivers)) in topologies(cfg).into_iter().enumerate() {
+        if i > 0 {
+            // Cool down between topology groups when asked (see `cooldown`).
+            cooldown(cfg);
+        }
         let mut group = c.benchmark_group(format!(
             "{gid}/{}",
             topology_token(topology, senders, receivers)

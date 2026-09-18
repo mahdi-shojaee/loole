@@ -52,11 +52,19 @@ pub fn record_run_start_at(criterion_dir: &Path, cfg: &Config) -> io::Result<Pat
         .map(|c| c.to_string())
         .collect::<Vec<_>>()
         .join(",");
+    // Machine snapshot for fairness auditing: a suspicious ranking can be
+    // checked against the conditions each run measured under. Uses only
+    // portable std APIs (no OS-specific sensors) so markers stay identical
+    // across Linux/macOS/Windows.
+    let parallelism = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(0);
     let payload = format!(
         concat!(
             "{{\"started_at\":{started_ms},\"message_size\":{message_size},",
             "\"messages_no\":{messages_no},\"senders\":{senders},\"receivers\":{receivers},",
-            "\"metric\":\"{metric}\",\"latency_rounds\":{latency_rounds},\"crates\":\"{crates}\"}}\n"
+            "\"metric\":\"{metric}\",\"latency_rounds\":{latency_rounds},\"crates\":\"{crates}\",",
+            "\"parallelism\":{parallelism}}}\n"
         ),
         started_ms = started_ms,
         message_size = cfg.message_size,
@@ -66,6 +74,7 @@ pub fn record_run_start_at(criterion_dir: &Path, cfg: &Config) -> io::Result<Pat
         metric = cfg.metric,
         latency_rounds = cfg.latency_rounds,
         crates = crates,
+        parallelism = parallelism,
     );
     fs::write(&path, payload)?;
     Ok(path)
@@ -126,6 +135,7 @@ mod tests {
             latency_rounds: 7_000,
             latency_warmup: 100,
             no_charts: false,
+            cooldown_secs: 0,
         };
         let path = record_run_start_at(&dir, &cfg).unwrap();
         let body = fs::read_to_string(path).unwrap();
@@ -140,6 +150,14 @@ mod tests {
         ] {
             assert!(body.contains(needle), "missing {needle} in {body}");
         }
+        // Machine snapshot: echoes this host's parallelism, whatever it is.
+        let expected = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0);
+        assert!(
+            body.contains(&format!("\"parallelism\":{expected}")),
+            "missing parallelism snapshot in {body}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

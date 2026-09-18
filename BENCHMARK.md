@@ -68,6 +68,7 @@ Suite options (each is also settable via its environment variable):
 | `--crates` | | `BENCH_CRATES` | `all` | Space/comma-separated crates (e.g. `"loole flume"`) |
 | `--latency-rounds` | | `BENCH_LATENCY_ROUNDS` | `100000` | Timed ping-pong round trips per iteration |
 | `--latency-warmup` | | `BENCH_LATENCY_WARMUP` | `1000` | Untimed warm-up round trips per iteration |
+| `--cooldown-secs` | | `BENCH_COOLDOWN_SECS` | `0` | Idle seconds between benchmark groups so the machine cools down (0 disables) |
 | `--no-charts` | | `BENCH_NO_CHARTS` | off | Skip the automatic chart update after a full run |
 
 All native criterion options pass straight through:
@@ -154,3 +155,23 @@ interval) at the end of the run; the full plots live under
 * For decisions that matter, pair baselines with deeper sampling
   (`--sample-size 40 --measurement-time 10`) so the reported deltas carry
   tighter confidence intervals.
+
+## Fairness across runs
+
+High-churn cells (large messages, hundreds of senders) heat the CPU, and
+later cells then measure throttled performance. Two consequences:
+
+* Cells measured late in a long run read slower than the same cells measured
+  on a cool machine. Unbounded channels and large payloads are the canaries:
+  their live set exceeds the last-level cache and their iterations are short,
+  so any scheduling or thermal perturbation lands at full weight, while
+  bounded/small cells with backpressure stay stable.
+* Bigger sampling (`--sample-size 30 --measurement-time 10`) does **not**
+  fix this: it measures the throttled operating point more precisely, and
+  the longer run generates even more heat. Precision is not fairness.
+
+What does help: let the machine cool down (`--cooldown-secs 90` idles
+between benchmark groups), compare branches in rotated or interleaved order
+so residual drift hits every branch equally, and check the run markers
+(`target/criterion/runs/last-<size>.json`, which record start time and CPU
+parallelism) before trusting a ranking that flips between runs.

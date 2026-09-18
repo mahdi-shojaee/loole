@@ -75,6 +75,11 @@ pub struct Config {
     pub latency_warmup: usize,
     /// Skip the automatic chart update after a full run.
     pub no_charts: bool,
+    /// Idle seconds between benchmark groups (topologies) and before the
+    /// latency group so the machine cools down. High-churn cells heat the
+    /// CPU; without a cooldown, later groups measure throttled performance
+    /// and comparisons across runs stop being fair. Zero disables.
+    pub cooldown_secs: u64,
 }
 
 impl Default for Config {
@@ -89,6 +94,7 @@ impl Default for Config {
             latency_rounds: DEFAULT_LATENCY_ROUNDS,
             latency_warmup: DEFAULT_LATENCY_WARMUP,
             no_charts: false,
+            cooldown_secs: 0,
         }
     }
 }
@@ -140,6 +146,11 @@ pub const PARAMS: &[Param] = &[
         long: "--latency-warmup",
         short: None,
         env: "BENCH_LATENCY_WARMUP",
+    },
+    Param {
+        long: "--cooldown-secs",
+        short: None,
+        env: "BENCH_COOLDOWN_SECS",
     },
 ];
 
@@ -219,6 +230,15 @@ fn parse_bool(env: &str, value: &str) -> Result<bool, String> {
     }
 }
 
+/// Parses a non-negative integer. Unlike [`parse_count`], zero is valid:
+/// a zero cooldown disables the inter-group sleep.
+fn parse_nonnegative(env: &str, value: &str) -> Result<u64, String> {
+    value
+        .trim()
+        .parse()
+        .map_err(|_| format!("{env}: '{value}' is not a non-negative integer"))
+}
+
 /// Canonicalizes one parameter value, assigning it to `cfg`.
 fn apply_value(cfg: &mut Config, env: &'static str, value: &str) -> Result<(), String> {
     match env {
@@ -231,6 +251,7 @@ fn apply_value(cfg: &mut Config, env: &'static str, value: &str) -> Result<(), S
         "BENCH_LATENCY_ROUNDS" => cfg.latency_rounds = parse_count(env, value)?,
         "BENCH_LATENCY_WARMUP" => cfg.latency_warmup = parse_count(env, value)?,
         "BENCH_NO_CHARTS" => cfg.no_charts = parse_bool(env, value)?,
+        "BENCH_COOLDOWN_SECS" => cfg.cooldown_secs = parse_nonnegative(env, value)?,
         other => return Err(format!("unknown parameter environment name: {other}")),
     }
     Ok(())
@@ -405,6 +426,7 @@ mod tests {
         assert_eq!(cfg.receivers, 10);
         assert_eq!(cfg.latency_rounds, 100_000);
         assert_eq!(cfg.latency_warmup, 1_000);
+        assert_eq!(cfg.cooldown_secs, 0);
     }
 
     #[test]
@@ -418,6 +440,7 @@ mod tests {
             ("BENCH_CRATES", "loole tokio"),
             ("BENCH_LATENCY_ROUNDS", "777"),
             ("BENCH_LATENCY_WARMUP", "10"),
+            ("BENCH_COOLDOWN_SECS", "90"),
         ])
         .unwrap();
         assert_eq!(cfg.message_size, 32);
@@ -428,6 +451,25 @@ mod tests {
         assert_eq!(cfg.crates, vec![CrateName::Loole, CrateName::Tokio]);
         assert_eq!(cfg.latency_rounds, 777);
         assert_eq!(cfg.latency_warmup, 10);
+        assert_eq!(cfg.cooldown_secs, 90);
+    }
+
+    #[test]
+    fn cooldown_defaults_to_zero_and_accepts_zero() {
+        assert_eq!(from_env_pairs(&[]).unwrap().cooldown_secs, 0);
+        assert_eq!(
+            from_env_pairs(&[("BENCH_COOLDOWN_SECS", "0")])
+                .unwrap()
+                .cooldown_secs,
+            0
+        );
+    }
+
+    #[test]
+    fn cooldown_rejects_non_numbers_and_negatives() {
+        assert!(from_env_pairs(&[("BENCH_COOLDOWN_SECS", "abc")]).is_err());
+        assert!(from_env_pairs(&[("BENCH_COOLDOWN_SECS", "-5")]).is_err());
+        assert!(from_env_pairs(&[("BENCH_COOLDOWN_SECS", "")]).is_err());
     }
 
     #[test]
