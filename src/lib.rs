@@ -466,8 +466,14 @@ fn try_send<T>(m: T, mut guard: MutexGuard<'_, SharedState<T>>) -> TrySendResult
             guard.queue.push_back(m);
         }
 
-        // Wake waiting receivers (queue-backed message).
-        wake_next_pending_recv(guard);
+        // Wake waiting receivers (queue-backed message). Skip the wake scan
+        // entirely when nobody is parked: the flooded unbounded case pays
+        // only a len check instead of Vec::new + empty dequeue.
+        if guard.pending_recvs.len() != 0 {
+            wake_next_pending_recv(guard);
+        } else {
+            drop(guard);
+        }
         return TrySendResult::Ok;
     } else if guard.cap == Some(0) {
         if let Some((_, e)) = guard.pending_recvs.dequeue() {
@@ -498,25 +504,44 @@ fn try_send<T>(m: T, mut guard: MutexGuard<'_, SharedState<T>>) -> TrySendResult
 /// receivers are left. Takes the lock guard by value: the channel lock is
 /// released before any signal is woken.
 fn wake_next_pending_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) {
-    let mut to_wake = Vec::new();
-    loop {
-        match guard.pending_recvs.dequeue() {
-            Some((_, PendingRecv::Hook(hook))) => {
-                to_wake.push(Signal::Sync(hook.signal.clone()));
-                break;
-            }
-            Some((_, PendingRecv::Waker { signal, is_stream })) => {
-                to_wake.push(signal);
-                if !is_stream {
-                    break;
+    // Fast path: single non-stream waiter (the common recv_async case).
+    // Dequeue one entry, drop the lock, wake — no Vec, no heap alloc.
+    // The multi-wake loop below only runs for stream receivers (cold:
+    // throughput/latency benches use recv_async, never streams).
+    match guard.pending_recvs.dequeue() {
+        Some((_, PendingRecv::Hook(hook))) => {
+            let sig = Signal::Sync(hook.signal.clone());
+            drop(guard);
+            sig.wake();
+        }
+        Some((_, PendingRecv::Waker { signal, is_stream })) if !is_stream => {
+            drop(guard);
+            signal.wake();
+        }
+        Some((_, PendingRecv::Waker { signal, .. })) => {
+            let mut to_wake = Vec::with_capacity(2);
+            to_wake.push(signal);
+            loop {
+                match guard.pending_recvs.dequeue() {
+                    Some((_, PendingRecv::Hook(hook))) => {
+                        to_wake.push(Signal::Sync(hook.signal.clone()));
+                        break;
+                    }
+                    Some((_, PendingRecv::Waker { signal, is_stream })) => {
+                        to_wake.push(signal);
+                        if !is_stream {
+                            break;
+                        }
+                    }
+                    None => break,
                 }
             }
-            None => break,
+            drop(guard);
+            for s in to_wake {
+                s.wake();
+            }
         }
-    }
-    drop(guard);
-    for e in to_wake {
-        e.wake();
+        None => drop(guard),
     }
 }
 
@@ -528,7 +553,11 @@ enum TryRecvResult<'a, T> {
 
 #[inline(always)]
 fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T> {
-        if let Some(m) = guard.queue.pop_front() {
+    if let Some(m) = guard.queue.pop_front() {
+        // Unbounded channels never park senders (never full), so
+        // pending_sends is always empty: skip the dequeue probe.
+        // Bounded channels refill one parked send per recv.
+        if guard.cap.is_some() {
             if let Some((_, send)) = guard.pending_sends.dequeue() {
                 match send {
                     PendingSend::Parked(m2, signal) => {
@@ -542,20 +571,21 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T
                     }
                 }
             }
-            return TryRecvResult::Ok(m);
-        } else if guard.cap == Some(0) {
-            if let Some((_, send)) = guard.pending_sends.dequeue() {
-                match send {
-                    PendingSend::Parked(m, signal) => {
-                        signal.mark_taken();
-                        drop(guard);
-                        signal.wake();
-                        return TryRecvResult::Ok(m);
-                    }
-                    PendingSend::Gift(m) => return TryRecvResult::Ok(m),
+        }
+        return TryRecvResult::Ok(m);
+    } else if guard.cap == Some(0) {
+        if let Some((_, send)) = guard.pending_sends.dequeue() {
+            match send {
+                PendingSend::Parked(m, signal) => {
+                    signal.mark_taken();
+                    drop(guard);
+                    signal.wake();
+                    return TryRecvResult::Ok(m);
                 }
+                PendingSend::Gift(m) => return TryRecvResult::Ok(m),
             }
         }
+    }
     if guard.closed {
         return TryRecvResult::Disconnected;
     }
@@ -785,7 +815,9 @@ impl<T> Future for SendFuture<T> {
         };
         let id = guard.get_next_id();
         let signal: Signal = cx.waker().clone().into();
-        guard.pending_sends.enqueue(id, PendingSend::Parked(m, signal.clone()));
+        guard
+            .pending_sends
+            .enqueue(id, PendingSend::Parked(m, signal.clone()));
         let opt = guard.pending_recvs.dequeue();
         drop(guard);
         if let Some((_, e)) = opt {
@@ -987,9 +1019,7 @@ impl<T> Clone for Sender<T> {
 impl<T> Sender<T> {
     fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
         Self {
-            inner: Arc::new(SenderInner {
-                shared_state,
-            })
+            inner: Arc::new(SenderInner { shared_state }),
         }
     }
 
@@ -1036,7 +1066,9 @@ impl<T> Sender<T> {
         let id = guard.get_next_id();
         let sync_signal = SyncSignal::new();
         let spin = should_spin(guard.cap, Arc::strong_count(&self.inner));
-        guard.pending_sends.enqueue(id, PendingSend::Parked(m, sync_signal.clone().into()));
+        guard
+            .pending_sends
+            .enqueue(id, PendingSend::Parked(m, sync_signal.clone().into()));
         drop(guard);
         loop {
             if spin {
@@ -1088,7 +1120,9 @@ impl<T> Sender<T> {
         };
         let id = guard.get_next_id();
         let sync_signal = SyncSignal::new();
-        guard.pending_sends.enqueue(id, PendingSend::Parked(m, sync_signal.clone().into()));
+        guard
+            .pending_sends
+            .enqueue(id, PendingSend::Parked(m, sync_signal.clone().into()));
         drop(guard);
         // `None` on overflow (e.g. `Duration::MAX`): the timeout is
         // effectively infinite, so wait without a deadline below.
@@ -1270,9 +1304,7 @@ impl<T> Clone for Receiver<T> {
 impl<T> Receiver<T> {
     fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
         Self {
-            inner: Arc::new(ReceiverInner {
-                shared_state,
-            }),
+            inner: Arc::new(ReceiverInner { shared_state }),
         }
     }
 
@@ -1320,10 +1352,7 @@ impl<T> Receiver<T> {
                 // Park a plain waker instead: the sender's cap-0 send leaves a
                 // Gift in `pending_sends` and we re-lock to pop it.
                 let signal = SyncSignal::new();
-                let spin = should_spin(
-                    guard.cap,
-                    Arc::strong_count(&self.inner),
-                );
+                let spin = should_spin(guard.cap, Arc::strong_count(&self.inner));
                 guard.pending_recvs.enqueue(
                     id,
                     PendingRecv::Waker {
@@ -1348,7 +1377,9 @@ impl<T> Receiver<T> {
                 signal: SyncSignal::new(),
             });
             let spin = should_spin(guard.cap, Arc::strong_count(&self.inner));
-            guard.pending_recvs.enqueue(id, PendingRecv::Hook(hook.clone()));
+            guard
+                .pending_recvs
+                .enqueue(id, PendingRecv::Hook(hook.clone()));
             drop(guard);
             // Park until woken. A sender that rendezvoused with us deposited the
             // message directly into our slot, which we can take without re-locking
@@ -1414,7 +1445,9 @@ impl<T> Receiver<T> {
                 slot: Mutex::new(None),
                 signal: SyncSignal::new(),
             });
-            guard.pending_recvs.enqueue(id, PendingRecv::Hook(hook.clone()));
+            guard
+                .pending_recvs
+                .enqueue(id, PendingRecv::Hook(hook.clone()));
             drop(guard);
             let _ = hook.signal.wait_timeout(timeout_remaining);
             // Direct deposit needs no channel lock.
