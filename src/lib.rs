@@ -84,9 +84,18 @@ const SYNC_SPIN_PAUSES: u32 = 128;
 /// thread busy-waits while the single peer serves the others, saturating the
 /// CPU (measured: MPSC b(0-10) sync rows collapse to ~70% with 1000 spinning
 /// senders).
+/// Spin before parking only on rendezvous-like channels (cap 0/1) with a
+/// single sender and single receiver. There every park is a lockstep handoff:
+/// the queue oscillates between full and empty, so a parking side is handed
+/// off by a hot peer within a few hundred ns, and the spin converts the futex
+/// round trip into a busy-wait catch. On deeper buffers a park means the peer
+/// is genuinely behind (that is why the queue filled up / drained), so the
+/// delivery latency far exceeds the spin window and the spin is pure overhead
+/// (measured: SPSC sync rows at b10 lose ~25% with the spin, and
+/// recover without it; b0/b1 keep the spin and keep winning).
 #[inline(always)]
 fn should_spin(cap: Option<usize>, peer_count: usize) -> bool {
-    matches!(cap, Some(c) if c <= 16) && peer_count == 1
+    matches!(cap, Some(c) if c <= 1) && peer_count == 1
 }
 
 /// An error that occurs when trying to receive a value from a channel after all senders have been
