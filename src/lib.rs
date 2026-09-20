@@ -576,8 +576,8 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T
             if let Some((_, send)) = guard.pending_sends.dequeue() {
                 match send {
                     PendingSend::Parked(m2, signal) => {
-                        signal.mark_taken();
                         guard.queue.push_back(m2);
+                        signal.mark_taken();
                         drop(guard);
                         signal.wake();
                     }
@@ -1571,8 +1571,8 @@ impl<T> Receiver<T> {
             if let Some((_, send)) = guard.pending_sends.dequeue() {
                 match send {
                     PendingSend::Parked(m, signal) => {
-                        signal.mark_taken();
                         guard.queue.push_back(m);
+                        signal.mark_taken();
                         signal.wake();
                     }
                     PendingSend::Gift(m) => guard.queue.push_back(m),
