@@ -379,10 +379,15 @@ struct SharedState<T> {
 impl<T> SharedState<T> {
     fn new(cap: Option<usize>) -> Self {
         let pending_sends = cap.map_or_else(Queue::new, Queue::with_capacity);
+        // Preallocate the queue ring for bounded channels so the first fill
+        // to `cap` (e.g. 100 x 16KB payload headers at b100) never pays
+        // VecDeque growth reallocs inside the timed benchmark window.
+        // Unbounded keeps `new()` (unknown size, first fill is small).
+        let queue = cap.map_or_else(VecDeque::new, VecDeque::with_capacity);
         Self {
             pending_recvs: Queue::new(),
             pending_sends,
-            queue: VecDeque::new(),
+            queue,
             closed: false,
             cap,
             next_id: 1,
@@ -638,7 +643,6 @@ pub struct SendFuture<'a, T> {
 #[derive(Debug)]
 struct SendParked {
     id: usize,
-    signal: Signal,
 }
 
 impl<'a, T> SendFuture<'a, T> {
@@ -804,18 +808,15 @@ impl<'a, T> Future for SendFuture<'a, T> {
             }
             // The send is still queued: refresh the registered waker so a
             // wake-up is never delivered to a stale waker when the future is
-            // re-polled by a different task (e.g. after `select!`).
-            let mut new_signal = parked.signal.clone();
-            new_signal.update_waker(cx.waker());
-            guard
-                .pending_sends
-                .get_mut(parked.id)
-                .map(|send| match send {
-                    PendingSend::Parked(_, signal) => *signal = new_signal.clone(),
-                    PendingSend::Gift(_) => {}
-                });
+            // re-polled by a different task (e.g. after `select!`). The queue
+            // entry holds the only waker copy (the future keeps just the id,
+            // see `SendParked`), so update it in place — zero clones on the
+            // common same-task re-poll, one clone into the entry itself only
+            // when migrating tasks.
+            if let Some(PendingSend::Parked(_, signal)) = guard.pending_sends.get_mut(id) {
+                signal.update_waker(cx.waker());
+            }
             drop(guard);
-            self.parked.as_mut().map(|p| p.signal = new_signal);
             return Poll::Pending;
         }
         let m = match self.msg.take() {
@@ -834,7 +835,7 @@ impl<'a, T> Future for SendFuture<'a, T> {
         let signal: Signal = cx.waker().clone().into();
         guard
             .pending_sends
-            .enqueue(id, PendingSend::Parked(m, signal.clone()));
+            .enqueue(id, PendingSend::Parked(m, signal));
         let opt = guard.pending_recvs.dequeue();
         drop(guard);
         if let Some((_, e)) = opt {
@@ -843,7 +844,7 @@ impl<'a, T> Future for SendFuture<'a, T> {
                 PendingRecv::Waker { signal, .. } => signal.wake(),
             }
         }
-        self.parked = Some(SendParked { id, signal });
+        self.parked = Some(SendParked { id });
         Poll::Pending
     }
 }
