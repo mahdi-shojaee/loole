@@ -49,6 +49,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::ready;
 use std::task::{Context, Poll};
@@ -567,13 +568,22 @@ enum TryRecvResult<'a, T> {
 }
 
 #[inline(always)]
-fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T> {
+fn try_recv<'a, T>(
+    core: &'a ChannelCore<T>,
+    mut guard: MutexGuard<'a, SharedState<T>>,
+) -> TryRecvResult<'a, T> {
     if let Some(m) = guard.queue.pop_front() {
         // Unbounded channels never park senders (never full), so
         // pending_sends is always empty: skip the dequeue probe.
         // Bounded channels refill one parked send per recv.
         if guard.cap.is_some() {
-            if let Some((_, send)) = guard.pending_sends.dequeue() {
+            if let Some((cid, send)) = guard.pending_sends.dequeue() {
+                // Publish the consumed id (FIFO => the watermark is monotonic)
+                // so the woken sender can confirm without the channel lock.
+                // The message is already enqueued at this point, so the
+                // `Release` store is paired with the parked sender's `Acquire`
+                // load: resolving `Ok` is only ever observed after delivery.
+                core.consumed_park.store(cid, Ordering::Release);
                 match send {
                     PendingSend::Parked(m2, signal) => {
                         guard.queue.push_back(m2);
@@ -589,7 +599,8 @@ fn try_recv<T>(mut guard: MutexGuard<'_, SharedState<T>>) -> TryRecvResult<'_, T
         }
         return TryRecvResult::Ok(m);
     } else if guard.cap == Some(0) {
-        if let Some((_, send)) = guard.pending_sends.dequeue() {
+        if let Some((cid, send)) = guard.pending_sends.dequeue() {
+            core.consumed_park.store(cid, Ordering::Release);
             match send {
                 PendingSend::Parked(m, signal) => {
                     signal.mark_taken();
@@ -735,7 +746,7 @@ impl<'a, T> Sink<T> for SendSink<'a, T> {
         // normal sequential sink usage the entry is already flushed and this
         // is a no-op discriminant check.
         if let Some(parked) = self.0.parked.take() {
-            let mut guard = self.0.sender.inner.shared_state.lock();
+            let mut guard = self.0.sender.inner.core.lock();
             guard.pending_sends.remove(parked.id);
         }
         self.0.msg = MessageOrId::Message(item);
@@ -787,12 +798,36 @@ impl<'a, T> Future for SendFuture<'a, T> {
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if let Some(parked) = &self.parked {
+            let id = parked.id;
+            // Lock-free consumed fast path: a receiver that consumes a parked
+            // send publishes the entry's id on `consumed_park` before waking
+            // us. `pending_sends` is one FIFO queue, so the watermark is
+            // monotonic and `>=` is exact — if it has reached our id, our
+            // message was already accepted into the channel (enqueued before
+            // the `Release` store, which our `Acquire` load pairs with).
+            // This avoids taking the channel lock right at the moment the
+            // scheduler runs us, where it would contend with the receiver's
+            // ongoing pop loop (spin, and at worst a futex stall that
+            // de-phases the producer/consumer pipeline on large buffered
+            // channels). Falls back to the lock-based confirm below when the
+            // watermark has not advanced (spurious wake, close, or a
+            // not-yet-published store).
+            if self
+                .sender
+                .inner
+                .core
+                .consumed_park
+                .load(Ordering::Acquire)
+                >= id
+            {
+                self.parked = None;
+                return Poll::Ready(Ok(()));
+            }
             // Parked asynchronously: confirm consumption by re-locking and
             // checking whether the entry is gone. (This is cheaper than an Arc
             // alloc per blocking send, which dominates low-capacity SPSC async
             // rows.)
-            let id = parked.id;
-            let mut guard = self.sender.inner.shared_state.lock();
+            let mut guard = self.sender.inner.core.lock();
             if guard.closed {
                 if let Some((_, PendingSend::Parked(m, _))) = guard.pending_sends.remove(id) {
                     drop(guard);
@@ -825,7 +860,7 @@ impl<'a, T> Future for SendFuture<'a, T> {
             // resolve immediately instead of panicking.
             MessageOrId::Invalid => return Poll::Ready(Ok(())),
         };
-        let guard = self.sender.inner.shared_state.lock();
+        let guard = self.sender.inner.core.lock();
         let (m, mut guard) = match try_send(m, guard) {
             TrySendResult::Ok => return Poll::Ready(Ok(())),
             TrySendResult::Disconnected(m) => return Poll::Ready(Err(SendError(m))),
@@ -833,9 +868,7 @@ impl<'a, T> Future for SendFuture<'a, T> {
         };
         let id = guard.get_next_id();
         let signal: Signal = cx.waker().clone().into();
-        guard
-            .pending_sends
-            .enqueue(id, PendingSend::Parked(m, signal));
+        guard.pending_sends.enqueue(id, PendingSend::Parked(m, signal));
         let opt = guard.pending_recvs.dequeue();
         drop(guard);
         if let Some((_, e)) = opt {
@@ -862,7 +895,7 @@ impl<'a, T> Drop for SendFuture<'a, T> {
         // `Ready` return clears it), so the common path is a single
         // discriminant check with no lock taken.
         if let Some(parked) = self.parked.take() {
-            let mut guard = self.sender.inner.shared_state.lock();
+            let mut guard = self.sender.inner.core.lock();
             guard.pending_sends.remove(parked.id);
         }
     }
@@ -931,7 +964,7 @@ impl<'a, T> Future for RecvFuture<'a, T> {
         // tell an unpolled-after-claim drop from a completed one. Matters for
         // streams, which keep polling after each resolved item.
         this.completed = false;
-        let mut guard = match try_recv(this.receiver.inner.shared_state.lock()) {
+        let mut guard = match try_recv(&this.receiver.inner.core, this.receiver.inner.core.lock()) {
             TryRecvResult::Ok(r) => {
                 this.completed = true;
                 return Poll::Ready(Ok(r));
@@ -978,7 +1011,7 @@ impl<'a, T> Drop for RecvFuture<'a, T> {
     fn drop(&mut self) {
         if self.registered {
             if let Some(id) = self.id {
-                let mut guard = self.receiver.inner.shared_state.lock();
+                let mut guard = self.receiver.inner.core.lock();
                 if guard.pending_recvs.remove(id).is_none()
                     && !self.completed
                     && (!guard.queue.is_empty() || guard.pending_sends.len() != 0)
@@ -999,8 +1032,43 @@ impl<'a, T> Drop for RecvFuture<'a, T> {
     }
 }
 
+/// The channel's shared core: the mutex-protected state plus the lock-free
+/// consumed-park watermark beside it.
+///
+/// The watermark is the id of the most recently dequeued `pending_sends`
+/// entry. Because `pending_sends` is a single FIFO queue, dequeued ids are
+/// strictly increasing, so a parked async sender can confirm that its entry
+/// was consumed (its message accepted into the channel) with one `Acquire`
+/// load — no channel lock. This keeps the woken sender's re-entry into the
+/// pipeline lock-free; re-locking to confirm after every wake measurably
+/// lets the task get trapped behind its peer's fill/drain burst on large
+/// buffered channels (the SPSC async-async b100 collapse). The lock-based
+/// confirm remains as the fallback for everything the watermark cannot
+/// distinguish (close, spurious wake, an unpublished store).
+#[derive(Debug)]
+struct ChannelCore<T> {
+    state: Mutex<SharedState<T>>,
+    consumed_park: AtomicUsize,
+}
+
+impl<T> ChannelCore<T> {
+    fn new(state: SharedState<T>) -> Self {
+        Self {
+            state: Mutex::new(state),
+            consumed_park: AtomicUsize::new(0),
+        }
+    }
+
+    /// Forwarding `lock` so handle-side call sites read
+    /// `inner.core.lock()` uniformly.
+    #[inline(always)]
+    fn lock(&self) -> MutexGuard<'_, SharedState<T>> {
+        self.state.lock()
+    }
+}
+
 struct SenderInner<T> {
-    shared_state: Arc<Mutex<SharedState<T>>>,
+    core: Arc<ChannelCore<T>>,
 }
 
 // The channel is closed when the last `SenderInner` is dropped. Because every
@@ -1012,7 +1080,7 @@ struct SenderInner<T> {
 // plus a `fetch_update`, and now borrows instead of cloning).
 impl<T> Drop for SenderInner<T> {
     fn drop(&mut self) {
-        self.shared_state.lock().close();
+        self.core.lock().close();
     }
 }
 
@@ -1042,9 +1110,9 @@ impl<T> Clone for Sender<T> {
 }
 
 impl<T> Sender<T> {
-    fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
+    fn new(core: Arc<ChannelCore<T>>) -> Self {
         Self {
-            inner: Arc::new(SenderInner { shared_state }),
+            inner: Arc::new(SenderInner { core })
         }
     }
 
@@ -1057,7 +1125,7 @@ impl<T> Sender<T> {
     /// take appropriate action, such as retrying the send operation later or buffering the value
     /// until you can send it successfully.
     pub fn try_send(&self, m: T) -> Result<(), TrySendError<T>> {
-        match try_send(m, self.inner.shared_state.lock()) {
+        match try_send(m, self.inner.core.lock()) {
             TrySendResult::Ok => Ok(()),
             TrySendResult::Disconnected(m) => Err(TrySendError::Disconnected(m)),
             TrySendResult::Full(m, _) => Err(TrySendError::Full(m)),
@@ -1104,7 +1172,7 @@ impl<T> Sender<T> {
     /// Sends a value into the channel. Returns an error if all receivers have been dropped, or if
     /// the channel is bounded and is full and no receivers are available.
     pub fn send(&self, m: T) -> Result<(), SendError<T>> {
-        let (m, mut guard) = match try_send(m, self.inner.shared_state.lock()) {
+        let (m, mut guard) = match try_send(m, self.inner.core.lock()) {
             TrySendResult::Ok => return Ok(()),
             TrySendResult::Disconnected(m) => return Err(SendError(m)),
             TrySendResult::Full(m, guard) => (m, guard),
@@ -1132,7 +1200,7 @@ impl<T> Sender<T> {
                 // the flag before waking us, so no channel re-lock is needed.
                 return Ok(());
             }
-            let mut guard = self.inner.shared_state.lock();
+            let mut guard = self.inner.core.lock();
             if !guard.pending_sends.contains(id) {
                 // Consumed by a receiver.
                 return Ok(());
@@ -1159,7 +1227,7 @@ impl<T> Sender<T> {
     /// an error. If the channel is bounded and is full, this method will block until space is
     /// available, the timeout has expired, or all receivers have been dropped.
     pub fn send_timeout(&self, m: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
-        let (m, mut guard) = match try_send(m, self.inner.shared_state.lock()) {
+        let (m, mut guard) = match try_send(m, self.inner.core.lock()) {
             TrySendResult::Ok => return Ok(()),
             TrySendResult::Disconnected(m) => return Err(SendTimeoutError::Disconnected(m)),
             TrySendResult::Full(m, guard) => (m, guard),
@@ -1180,7 +1248,7 @@ impl<T> Sender<T> {
                     if remaining.is_zero() {
                         // Timeout elapsed. Report Timeout if the message is still here,
                         // Ok if a receiver consumed it in the meantime.
-                        let mut guard = self.inner.shared_state.lock();
+                        let mut guard = self.inner.core.lock();
                         if !guard.pending_sends.contains(id) {
                             return Ok(());
                         }
@@ -1205,7 +1273,7 @@ impl<T> Sender<T> {
                 // Consumed by a receiver; no re-lock needed.
                 return Ok(());
             }
-            let mut guard = self.inner.shared_state.lock();
+            let mut guard = self.inner.core.lock();
             if !guard.pending_sends.contains(id) {
                 // Consumed by a receiver.
                 return Ok(());
@@ -1236,7 +1304,7 @@ impl<T> Sender<T> {
 
     /// Returns `true` if the two senders belong to the same channel, and `false` otherwise.
     pub fn same_channel(&self, other: &Sender<T>) -> bool {
-        Arc::ptr_eq(&self.inner.shared_state, &other.inner.shared_state)
+        Arc::ptr_eq(&self.inner.core, &other.inner.core)
     }
 
     /// Returns the number of messages currently in the channel.
@@ -1244,26 +1312,26 @@ impl<T> Sender<T> {
     /// This function is useful for determining how many messages are waiting to be processed
     /// by consumers, or for implementing backpressure mechanisms.
     pub fn len(&self) -> usize {
-        self.inner.shared_state.lock().len()
+        self.inner.core.lock().len()
     }
 
     /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
     pub fn capacity(&self) -> Option<usize> {
-        self.inner.shared_state.lock().cap
+        self.inner.core.lock().cap
     }
 
     /// Returns true if the channel is empty.
     ///
     /// Note: Zero-capacity channels are always empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.shared_state.lock().is_empty()
+        self.inner.core.lock().is_empty()
     }
 
     /// Returns true if the channel is full.
     ///
     /// Note: Zero-capacity channels are always full.
     pub fn is_full(&self) -> bool {
-        self.inner.shared_state.lock().is_full()
+        self.inner.core.lock().is_full()
     }
 
     /// Closes the channel.
@@ -1272,12 +1340,12 @@ impl<T> Sender<T> {
     ///
     /// The remaining messages can still be received.
     pub fn close(&self) -> bool {
-        self.inner.shared_state.lock().close()
+        self.inner.core.lock().close()
     }
 
     /// Returns true if the channel is closed.
     pub fn is_closed(&self) -> bool {
-        self.inner.shared_state.lock().is_closed()
+        self.inner.core.lock().is_closed()
     }
 
     /// Returns a sink that can be used to send values into the channel.
@@ -1306,7 +1374,7 @@ impl<T> Sender<T> {
 // and `SenderInner::drop` closes the channel when the last handle is gone.
 
 struct ReceiverInner<T> {
-    shared_state: Arc<Mutex<SharedState<T>>>,
+    core: Arc<ChannelCore<T>>,
 }
 
 // Mirror of `SenderInner::drop`: close the channel when the last receiver
@@ -1315,7 +1383,7 @@ struct ReceiverInner<T> {
 // RMW on the hot async path.
 impl<T> Drop for ReceiverInner<T> {
     fn drop(&mut self) {
-        self.shared_state.lock().close();
+        self.core.lock().close();
     }
 }
 
@@ -1352,9 +1420,9 @@ impl<T> Clone for Receiver<T> {
 }
 
 impl<T> Receiver<T> {
-    fn new(shared_state: Arc<Mutex<SharedState<T>>>) -> Self {
+    fn new(core: Arc<ChannelCore<T>>) -> Self {
         Self {
-            inner: Arc::new(ReceiverInner { shared_state }),
+            inner: Arc::new(ReceiverInner { core })
         }
     }
 
@@ -1364,7 +1432,7 @@ impl<T> Receiver<T> {
     /// This method will block until a value is available on the channel, or until the channel is empty
     /// or all senders have been dropped.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        match try_recv(self.inner.shared_state.lock()) {
+        match try_recv(&self.inner.core, self.inner.core.lock()) {
             TryRecvResult::Ok(m) => Ok(m),
             TryRecvResult::Disconnected => Err(TryRecvError::Disconnected),
             TryRecvResult::Empty(_) => Err(TryRecvError::Empty),
@@ -1413,7 +1481,7 @@ impl<T> Receiver<T> {
     /// dropped and there are no more messages in the channel, this method will return an error.
     pub fn recv(&self) -> Result<T, RecvError> {
         loop {
-            let mut guard = match try_recv(self.inner.shared_state.lock()) {
+            let mut guard = match try_recv(&self.inner.core, self.inner.core.lock()) {
                 TryRecvResult::Ok(r) => return Ok(r),
                 TryRecvResult::Disconnected => return Err(RecvError::Disconnected),
                 TryRecvResult::Empty(guard) => guard,
@@ -1478,7 +1546,7 @@ impl<T> Receiver<T> {
         let start_time = Instant::now();
         let mut timeout_remaining = timeout;
         loop {
-            let mut guard = match try_recv(self.inner.shared_state.lock()) {
+            let mut guard = match try_recv(&self.inner.core, self.inner.core.lock()) {
                 TryRecvResult::Ok(r) => return Ok(r),
                 TryRecvResult::Disconnected => return Err(RecvTimeoutError::Disconnected),
                 TryRecvResult::Empty(guard) => guard,
@@ -1502,11 +1570,11 @@ impl<T> Receiver<T> {
                 let _ = signal.wait_timeout(timeout_remaining);
                 let elapsed = start_time.elapsed();
                 if elapsed >= timeout {
-                    let mut guard = self.inner.shared_state.lock();
+                    let mut guard = self.inner.core.lock();
                     guard.pending_recvs.remove(id);
                     drop(guard);
                     // A sender may have delivered just as we timed out; grab it.
-                    if let TryRecvResult::Ok(msg) = try_recv(self.inner.shared_state.lock()) {
+                    if let TryRecvResult::Ok(msg) = try_recv(&self.inner.core, self.inner.core.lock()) {
                         return Ok(msg);
                     }
                     return Err(RecvTimeoutError::Timeout);
@@ -1529,7 +1597,7 @@ impl<T> Receiver<T> {
             }
             let elapsed = start_time.elapsed();
             if elapsed >= timeout {
-                let mut guard = self.inner.shared_state.lock();
+                let mut guard = self.inner.core.lock();
                 guard.pending_recvs.remove(id);
                 drop(guard);
                 // A sender may have deposited into our slot just as we timed
@@ -1540,7 +1608,7 @@ impl<T> Receiver<T> {
                 // A sender may instead have delivered through the queue at
                 // the deadline (the general wake path notifies hooks without
                 // a deposit); grab it, mirroring the cap-0 arm above.
-                if let TryRecvResult::Ok(msg) = try_recv(self.inner.shared_state.lock()) {
+                if let TryRecvResult::Ok(msg) = try_recv(&self.inner.core, self.inner.core.lock()) {
                     return Ok(msg);
                 }
                 return Err(RecvTimeoutError::Timeout);
@@ -1562,13 +1630,19 @@ impl<T> Receiver<T> {
     /// `try_iter`, the iterator will not attempt to fetch any more values from the channel once
     /// the function has been called.
     pub fn drain(&self) -> Drain<'_, T> {
-        let mut guard = self.inner.shared_state.lock();
+        let mut guard = self.inner.core.lock();
         let queue = std::mem::take(&mut guard.queue);
         let n = guard
             .cap
             .map_or(0, |cap| cap.min(guard.pending_sends.len()));
         for _ in 0..n {
-            if let Some((_, send)) = guard.pending_sends.dequeue() {
+            if let Some((cid, send)) = guard.pending_sends.dequeue() {
+                // Publish the consumed id so woken async senders take the
+                // lock-free confirm path (see `ChannelCore::consumed_park`).
+                self.inner
+                    .core
+                    .consumed_park
+                    .store(cid, Ordering::Release);
                 match send {
                     PendingSend::Parked(m, signal) => {
                         guard.queue.push_back(m);
@@ -1602,7 +1676,7 @@ impl<T> Receiver<T> {
 
     /// Returns `true` if the two receivers belong to the same channel, and `false` otherwise.
     pub fn same_channel(&self, other: &Receiver<T>) -> bool {
-        Arc::ptr_eq(&self.inner.shared_state, &other.inner.shared_state)
+        Arc::ptr_eq(&self.inner.core, &other.inner.core)
     }
 
     /// Returns the number of messages currently in the channel.
@@ -1610,26 +1684,26 @@ impl<T> Receiver<T> {
     /// This function is useful for determining how many messages are waiting to be processed
     /// by consumers, or for implementing backpressure mechanisms.
     pub fn len(&self) -> usize {
-        self.inner.shared_state.lock().len()
+        self.inner.core.lock().len()
     }
 
     /// Returns the capacity of the channel, if it is bounded. Otherwise, returns `None`.
     pub fn capacity(&self) -> Option<usize> {
-        self.inner.shared_state.lock().cap
+        self.inner.core.lock().cap
     }
 
     /// Returns true if the channel is empty.
     ///
     /// Note: Zero-capacity channels are always empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.shared_state.lock().is_empty()
+        self.inner.core.lock().is_empty()
     }
 
     /// Returns true if the channel is full.
     ///
     /// Note: Zero-capacity channels are always full.
     pub fn is_full(&self) -> bool {
-        self.inner.shared_state.lock().is_full()
+        self.inner.core.lock().is_full()
     }
 
     /// Closes the channel.
@@ -1638,12 +1712,12 @@ impl<T> Receiver<T> {
     ///
     /// The remaining messages can still be received.
     pub fn close(&self) -> bool {
-        self.inner.shared_state.lock().close()
+        self.inner.core.lock().close()
     }
 
     /// Returns true if the channel is closed.
     pub fn is_closed(&self) -> bool {
-        self.inner.shared_state.lock().is_closed()
+        self.inner.core.lock().is_closed()
     }
 
     /// Returns a stream of messages from the channel.
@@ -1805,9 +1879,9 @@ impl<'a, T> Stream for RecvStream<'a, T> {
 }
 
 fn channel<T>(cap: Option<usize>) -> (Sender<T>, Receiver<T>) {
-    let shared_state = Arc::new(Mutex::new(SharedState::new(cap)));
-    let sender = Sender::new(Arc::clone(&shared_state));
-    let receiver = Receiver::new(shared_state);
+    let core = Arc::new(ChannelCore::new(SharedState::new(cap)));
+    let sender = Sender::new(Arc::clone(&core));
+    let receiver = Receiver::new(core);
     (sender, receiver)
 }
 
