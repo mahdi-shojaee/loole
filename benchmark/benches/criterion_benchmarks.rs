@@ -25,7 +25,8 @@ use benchmark::benchmark::{
 };
 use benchmark::chart_update::{should_update_charts, SkipReason};
 use benchmark::config::{
-    sampling_overrides_from, split_args, Config, SamplingOverrides, BOOL_FLAGS, CHILD_ENV, PARAMS,
+    isolate_envs, sampling_overrides_from, split_args, Config, SamplingOverrides, BOOL_FLAGS,
+    CHILD_ENV, PARAMS,
 };
 use benchmark::ids::{
     bench_id, group_id, topology_token, MetricKind, Topology, CAPACITIES, COMBOS,
@@ -70,6 +71,42 @@ fn wrapper_main() -> ! {
     }
     match split_args(&args) {
         Ok((env_pairs, passthrough)) => {
+            // Auditing sidecar plus optional per-crate isolation. Both read
+            // the effective config the same way `maybe_update_charts` does
+            // (CLI env assignments over process env). If the lookup fails,
+            // fall through to the single re-exec below; the child reports
+            // the error.
+            if let Ok(cfg) = Config::from_lookup(|name| {
+                env_pairs
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| v.clone())
+                    .or_else(|| std::env::var(name).ok())
+            }) {
+                write_machine_sidecar(&cfg, &env_pairs);
+                if cfg.isolate_crates && cfg.crates.len() > 1 {
+                    // One child per crate, each measuring exactly one
+                    // crate with otherwise identical workload env, so
+                    // heap/code/frequency warmup is paid equally by every
+                    // crate. Each child sees a single-crate subset, so a
+                    // per-child chart update would always be refused as a
+                    // partial run; update once below from the full config.
+                    let mut first_failure: Option<ExitStatus> = None;
+                    let mut last_status: Option<ExitStatus> = None;
+                    for krate in &cfg.crates {
+                        let child_env = isolate_envs(&env_pairs, &[krate.to_string()]);
+                        let status = re_exec(&child_env[0], &passthrough);
+                        if !status.success() && first_failure.is_none() {
+                            first_failure = Some(status);
+                        }
+                        last_status = Some(status);
+                    }
+                    let final_status = first_failure.or(last_status).expect("loop ran");
+                    maybe_update_charts(&env_pairs, &passthrough, final_status);
+                    exit(final_status.code().unwrap_or(1));
+                }
+            }
             let status = re_exec(&env_pairs, &passthrough);
             maybe_update_charts(&env_pairs, &passthrough, status);
             exit(status.code().unwrap_or(1));
@@ -90,6 +127,28 @@ fn re_exec(env_pairs: &[(&'static str, String)], passthrough: &[String]) -> Exit
         cmd.env(key, value);
     }
     cmd.status().expect("failed to spawn benchmark process")
+}
+
+/// Writes one collision-free `machine-<size>-<payload>-<unix_ms>.json` audit
+/// sidecar per wrapper invocation into the `runs/` dir next to the run
+/// markers (invocation = full original argv, workload = the wrapper's env
+/// assignments). Auditing must never fail a benchmark run, so
+/// resolution/write errors only warn on stderr.
+fn write_machine_sidecar(cfg: &Config, env_pairs: &[(&'static str, String)]) {
+    let runs_dir = match benchmark::run_marker::criterion_dir() {
+        Ok(dir) => dir.join("runs"),
+        Err(err) => {
+            eprintln!("warning: machine sidecar not written (criterion dir unresolved: {err})");
+            return;
+        }
+    };
+    let invocation = std::env::args().collect::<Vec<_>>().join(" ");
+    let desc = benchmark::machine::collect(&invocation, cfg.payload.token(), env_pairs);
+    let filename =
+        benchmark::machine::machine_filename(cfg.message_size, cfg.payload.token(), &desc.timestamp_ms);
+    if let Err(err) = benchmark::machine::write_machine_json_at(&runs_dir, &filename, &desc) {
+        eprintln!("warning: {filename} not written ({err})");
+    }
 }
 
 fn print_custom_help() {

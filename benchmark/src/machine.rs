@@ -173,8 +173,20 @@ pub fn collect(invocation: &str, payload: &str, extra_env: &[(&str, String)]) ->
     }
 }
 
-/// Writes `machine.json` into `dir` (created if missing) and returns its path.
-pub fn write_machine_json(dir: &Path, desc: &MachineDesc) -> io::Result<PathBuf> {
+/// Collision-free sidecar filename for one wrapper invocation:
+/// `machine-<message_size>-<payload>-<unix_ms>.json`, so repeated runs over
+/// sizes/payloads never overwrite each other's audit trail.
+pub fn machine_filename(message_size: usize, payload: &str, unix_ms: &str) -> String {
+    format!("machine-{message_size}-{payload}-{unix_ms}.json")
+}
+
+/// Writes the descriptor into `dir` (created if missing) under `filename`
+/// and returns its path.
+pub fn write_machine_json_at(
+    dir: &Path,
+    filename: &str,
+    desc: &MachineDesc,
+) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let freqs = desc
         .cur_freqs_khz
@@ -204,9 +216,14 @@ pub fn write_machine_json(dir: &Path, desc: &MachineDesc) -> io::Result<PathBuf>
         esc(&desc.git_dirty),
         env
     );
-    let path = dir.join("machine.json");
+    let path = dir.join(filename);
     std::fs::write(&path, body)?;
     Ok(path)
+}
+
+/// Writes `machine.json` into `dir` (created if missing) and returns its path.
+pub fn write_machine_json(dir: &Path, desc: &MachineDesc) -> io::Result<PathBuf> {
+    write_machine_json_at(dir, "machine.json", desc)
 }
 
 #[cfg(test)]
@@ -242,6 +259,26 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("\"payload\": \"shared\""));
         assert!(body.contains("\"BENCH_FOO\": \"bar\""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn machine_filename_is_collision_free_and_write_at_uses_it() {
+        assert_eq!(
+            machine_filename(256, "alloc", "123"),
+            "machine-256-alloc-123.json"
+        );
+        let dir = std::env::temp_dir().join(format!(
+            "loole-machine-at-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = collect("bench --test", "alloc", &[]);
+        let name = machine_filename(256, "alloc", &d.timestamp_ms);
+        let path = write_machine_json_at(&dir, &name, &d).unwrap();
+        assert_eq!(path, dir.join(&name));
+        assert!(path.is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -432,6 +432,27 @@ fn validated(param: &Param, value: &str) -> Result<(&'static str, String), Strin
     Ok((param.env, value.to_string()))
 }
 
+/// Build one env assignment list per crate for `--isolate-crates` mode: each
+/// child process measures exactly one crate with otherwise identical workload
+/// env, so heap/code/frequency warmup is paid equally by every crate.
+pub fn isolate_envs(
+    base: &[(&'static str, String)],
+    crate_names: &[String],
+) -> Vec<Vec<(&'static str, String)>> {
+    crate_names
+        .iter()
+        .map(|name| {
+            let mut child: Vec<(&'static str, String)> = base
+                .iter()
+                .filter(|(k, _)| *k != "BENCH_CRATES")
+                .cloned()
+                .collect();
+            child.push(("BENCH_CRATES", name.clone()));
+            child
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -783,5 +804,25 @@ mod tests {
         assert_eq!(rest, s(&["spsc"]));
         let (env, _) = split_args(&s(&["--no-warmup-cell"])).unwrap();
         assert_eq!(env, vec![("BENCH_NO_WARMUP_CELL", "1".to_string())]);
+    }
+
+    #[test]
+    fn isolate_envs_splits_one_crate_per_process() {
+        let base = vec![("BENCH_MSG_NO", "20000".to_string())];
+        let out = isolate_envs(&base, &["loole".to_string(), "flume".to_string()]);
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains(&("BENCH_CRATES", "loole".to_string())));
+        assert!(out[1].contains(&("BENCH_CRATES", "flume".to_string())));
+        // Shared workload env is preserved in every child.
+        for child in &out {
+            assert!(child.contains(&("BENCH_MSG_NO", "20000".to_string())));
+        }
+    }
+
+    #[test]
+    fn isolate_envs_single_crate_is_identity() {
+        let base: Vec<(&'static str, String)> = vec![];
+        let out = isolate_envs(&base, &["loole".to_string()]);
+        assert_eq!(out, vec![vec![("BENCH_CRATES", "loole".to_string())]]);
     }
 }
