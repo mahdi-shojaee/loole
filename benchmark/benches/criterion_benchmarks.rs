@@ -47,7 +47,18 @@ const MEASUREMENT_TIME: Duration = Duration::from_millis(1500);
 
 fn rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
-    RT.get_or_init(|| Runtime::new().unwrap())
+    RT.get_or_init(|| {
+        let workers = benchmark::config::parse_worker_threads(std::env::var("BENCH_WORKER_THREADS").ok().as_deref());
+        if workers == 0 {
+            Runtime::new().unwrap()
+        } else {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(workers)
+                .build()
+                .unwrap()
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------

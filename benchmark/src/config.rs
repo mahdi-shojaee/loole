@@ -275,6 +275,13 @@ fn parse_nonnegative(env: &str, value: &str) -> Result<u64, String> {
         .map_err(|_| format!("{env}: '{value}' is not a non-negative integer"))
 }
 
+/// Resolve the worker-thread count override: missing or unparseable means 0
+/// (runtime default, one worker per CPU). Never errors by design — a typo
+/// must not break a benchmark run; it just keeps the default.
+pub fn parse_worker_threads(value: Option<&str>) -> usize {
+    value.and_then(|v| v.trim().parse().ok()).unwrap_or(0)
+}
+
 /// Canonicalizes one parameter value, assigning it to `cfg`.
 fn apply_value(cfg: &mut Config, env: &'static str, value: &str) -> Result<(), String> {
     match env {
@@ -824,5 +831,19 @@ mod tests {
         let base: Vec<(&'static str, String)> = vec![];
         let out = isolate_envs(&base, &["loole".to_string()]);
         assert_eq!(out, vec![vec![("BENCH_CRATES", "loole".to_string())]]);
+    }
+
+    #[test]
+    fn parse_worker_threads_missing_or_bad_means_default() {
+        assert_eq!(parse_worker_threads(None), 0);
+        assert_eq!(parse_worker_threads(Some("")), 0);
+        assert_eq!(parse_worker_threads(Some("abc")), 0);
+    }
+
+    #[test]
+    fn parse_worker_threads_reads_counts() {
+        assert_eq!(parse_worker_threads(Some("0")), 0);
+        assert_eq!(parse_worker_threads(Some("2")), 2);
+        assert_eq!(parse_worker_threads(Some("24")), 24);
     }
 }
