@@ -9,6 +9,7 @@ pub mod benchmark;
 pub mod chart_update;
 pub mod config;
 pub mod ids;
+pub mod machine;
 pub mod message_type;
 pub mod run_marker;
 
