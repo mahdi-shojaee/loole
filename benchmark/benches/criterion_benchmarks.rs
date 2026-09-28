@@ -12,7 +12,7 @@
 //! `target/criterion` alone:
 //!
 //! ```text
-//! <metric>-<size>-n<count>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
+//! <metric>-<size>-n<count>-<payload>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
 //! ```
 
 use std::path::PathBuf;

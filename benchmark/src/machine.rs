@@ -1,8 +1,8 @@
 //! Machine/run descriptor for fairness auditing.
 //!
-//! Every benchmark invocation writes one `machine.json` next to its run
-//! marker so a suspicious ranking can be checked against the conditions it
-//! measured under: governor, per-CPU frequencies, topology, affinity, load,
+//! Every benchmark invocation writes one `machine-<size>-<payload>-<unix_ms>.json`
+//! via `write_machine_json_at` next to its run marker so a suspicious ranking
+//! can be checked against the conditions it measured under: governor, per-CPU frequencies, topology, affinity, load,
 //! memory, git revision, and the exact invocation. Readers use only portable
 //! std APIs plus best-effort `/proc` and `/sys` reads; every field falls back
 //! to `"unknown"` (never an error), so markers stay comparable across

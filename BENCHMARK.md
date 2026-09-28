@@ -32,7 +32,7 @@ as empty spots in the charts. Every dimension above is configurable — see
 1. The bench binary measures the full matrix and criterion writes per-cell
    statistics to `target/criterion/**/estimates.json`.
 2. At the start of each run the suite records a marker,
-   `target/criterion/runs/last-<size>.json`, holding the run's start time. The
+    `target/criterion/runs/last-<size>-<payload>.json`, holding the run's start time. The
    chart converter only trusts estimates written after that marker, so charts
    always reflect the latest run of a given message size and
    `target/criterion` never needs manual cleaning. Meta invocations
@@ -70,6 +70,10 @@ Suite options (each is also settable via its environment variable):
 | `--latency-warmup` | | `BENCH_LATENCY_WARMUP` | `1000` | Untimed warm-up round trips per iteration |
 | `--cooldown-secs` | | `BENCH_COOLDOWN_SECS` | `0` | Idle seconds between benchmark groups so the machine cools down (0 disables) |
 | `--no-charts` | | `BENCH_NO_CHARTS` | off | Skip the automatic chart update after a full run |
+| `--worker-threads` | | `BENCH_WORKER_THREADS` | `0` | tokio worker count (0 = one per CPU) |
+| `--isolate-crates` | | `BENCH_ISOLATE_CRATES` | off | one process per crate |
+| `--no-warmup-cell` | | `BENCH_NO_WARMUP_CELL` | off | skip pre-timing warmup |
+| `--payload` | | `BENCH_PAYLOAD` | `alloc` | alloc (fresh Vec per send) or shared (one Arc per sender) |
 
 All native criterion options pass straight through:
 
@@ -173,5 +177,48 @@ later cells then measure throttled performance. Two consequences:
 What does help: let the machine cool down (`--cooldown-secs 90` idles
 between benchmark groups), compare branches in rotated or interleaved order
 so residual drift hits every branch equally, and check the run markers
-(`target/criterion/runs/last-<size>.json`, which record start time and CPU
+(`target/criterion/runs/last-<size>-<payload>.json`, which record start time and CPU
 parallelism) before trusting a ranking that flips between runs.
+
+## Fairness protocol
+
+Three measured effects dominate naive comparisons on developer machines;
+the harness now neutralizes each by default or by flag:
+
+1. **Order tax (up to 3x).** Whoever measures first in a shared process
+   pays cold-start costs (frequency ramp, worker wake, cache warmup) while
+   the second crate coasts: second-runner wins ~9/10 mixed comparisons
+   regardless of crate. Use `--isolate-crates` (one process per crate, each
+   pays cold equally) or alternate `--crates` order across repeats with
+   `benchmark/compare.sh` (it alternates automatically).
+2. **Placement lottery (P/E cores, frequency).** Unpinned runs roam across
+    heterogeneous cores and power states (observed 0.55–3.5M for identical
+    code); any fixed 2-core pin is stable. Record the machine descriptor
+    (`machine-<size>-<payload>-<unix_ms>.json` in `target/criterion/runs/`,
+    written per run) and prefer pinned runs for decisions:
+   `TASKSET="0-7" benchmark/compare.sh ...`. Fix the runtime size with
+   `--worker-threads` when comparing scheduler-sensitive cells.
+3. **Payload churn.** At 16KB, fresh-`Vec`-per-send measures the allocator
+   more than the channel. Compare `--payload shared` (one `Arc` per sender,
+   refcount per send) for the channel-truth number alongside the default
+   `alloc` history number. Chart JSONs render `alloc` mode only.
+
+## Graded 5-repeat recipe
+
+```bash
+benchmark/compare.sh --repeats 5 --crates "loole flume" -- \
+  -n 100000 -m 16384 --metric throughput spsc-s1r1/async-async/b100
+```
+
+`compare.sh` alternates which crate measures first per repeat, snapshots
+each repeat under `target/bench-runs/<timestamp>/`, and prints a winner
+table plus win tally (`wins: loole=X flume=Y`). A result counts when loole
+wins 4 of 5. For placement-stable numbers add `TASKSET="0-7"`; for deeper
+confidence intervals append `--sample-size 40 --measurement-time 10`.
+
+## Machine descriptor
+
+Every invocation writes `target/criterion/runs/machine-<size>-<payload>-<unix_ms>.json`
+(governor, per-CPU frequencies, topology, process affinity, load, memory, git
+SHA + dirty flag, full invocation and `BENCH_*` env). Attach it to any
+published number; check it first whenever a ranking flips between runs.
