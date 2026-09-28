@@ -281,6 +281,11 @@ fn criterion_benchmarks(c: &mut Criterion) {
             exit(2);
         }
     }
+    if !cfg.no_warmup_cell && !benchmark::chart_update::is_meta_run(&args) {
+        for &krate in &cfg.crates {
+            benchmark::warmup::run_once(rt(), krate, 1_000);
+        }
+    }
     let ran_throughput = cfg.metric.includes_throughput();
     if ran_throughput {
         throughput_groups(c, &cfg, overrides);

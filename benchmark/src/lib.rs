@@ -12,6 +12,7 @@ pub mod ids;
 pub mod machine;
 pub mod message_type;
 pub mod run_marker;
+pub mod warmup;
 
 mod async_channel_bench;
 mod crossbeam_channel_bench;
