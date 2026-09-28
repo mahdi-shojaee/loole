@@ -5,9 +5,8 @@
 //! from the path criterion writes results to:
 //!
 //! ```text
-//! <metric>-<size>-n<count>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
-//! e.g. throughput-256-n100000/mpsc-s1000r1/sync-sync/b10/loole
-//!      latency-32-n100000/spsc-s1r1/async-sync/unbounded/kanal-std-mutex
+//! <metric>-<size>-n<count>-<payload>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
+//! e.g. throughput-256-n100000-alloc/mpsc-s1000r1/sync-sync/b10/loole
 //! ```
 //!
 //! Tokens are lowercase/digits/hyphens only (criterion uses IDs as path segments), so
@@ -95,10 +94,23 @@ pub fn topology_token(topology: Topology, senders: usize, receivers: usize) -> S
     format!("{name}-s{senders}r{receivers}")
 }
 
-/// The criterion *group* ID (workload-level): `<metric>-<size>-n<count>`.
+/// The criterion *group* ID (workload-level): `<metric>-<size>-n<count>-<payload>`.
 /// `count` is messages-per-iteration for throughput, round-trips for latency.
-pub fn group_id(kind: MetricKind, message_size: usize, workload: usize) -> String {
-    format!("{}-{message_size}-n{workload}", kind.as_str())
+pub fn payload_token(kind: crate::message_type::PayloadKind) -> &'static str {
+    kind.token()
+}
+
+pub fn group_id(
+    kind: MetricKind,
+    message_size: usize,
+    workload: usize,
+    payload: crate::message_type::PayloadKind,
+) -> String {
+    format!(
+        "{}-{message_size}-n{workload}-{}",
+        kind.as_str(),
+        payload.token()
+    )
 }
 
 /// The criterion *function* ID within a group: `<combo>/<cap>/<crate>`.
@@ -114,16 +126,17 @@ pub fn bench_id(combo: Combo, cap: Option<usize>, krate: CrateName) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message_type::PayloadKind;
 
     #[test]
     fn group_ids_encode_metric_size_and_workload() {
         assert_eq!(
-            group_id(MetricKind::Throughput, 256, 100_000),
-            "throughput-256-n100000"
+            group_id(MetricKind::Throughput, 256, 100_000, PayloadKind::Alloc),
+            "throughput-256-n100000-alloc"
         );
         assert_eq!(
-            group_id(MetricKind::Latency, 32, 50_000),
-            "latency-32-n50000"
+            group_id(MetricKind::Latency, 32, 50_000, PayloadKind::Shared),
+            "latency-32-n50000-shared"
         );
     }
 

@@ -5,10 +5,10 @@
 // existing renderer (main.js) expects.
 //
 // Benchmark IDs are self-describing (see benchmark/src/ids.rs):
-//   <metric>-<size>-n<count>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
+//   <metric>-<size>-n<count>-<payload>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
 // criterion sanitizes '/' in IDs to '_' in directory names; none of our tokens
 // contain '_', so parsing stays unambiguous. e.g.:
-//   throughput-256-n100000_mpsc-s1000r1/sync-sync_b10_loole/new/estimates.json
+//   throughput-256-n100000-alloc_mpsc-s1000r1/sync-sync_b10_loole/new/estimates.json
 //
 // Selection rule per cell: the deepest workload (-n) wins; within one
 // workload, the latest run wins. `rm -rf target/criterion` before publish runs
@@ -53,7 +53,7 @@ const COMBO_FLAVORS = {
 
 // --- Parsing criterion's directory names -------------------------------------
 
-const GROUP_RE = /^(throughput|latency)-(\d+)-n(\d+)_(spsc|mpsc|mpmc)-s(\d+)r(\d+)$/;
+const GROUP_RE = /^(throughput|latency)-(\d+)-n(\d+)-(alloc|shared)_(spsc|mpsc|mpmc)-s(\d+)r(\d+)$/;
 const FUNC_RE = /^(sync-sync|async-async|async-sync|sync-async)_(b\d+|unbounded)_(.+)$/;
 
 function parseId(groupDir, funcDir) {
@@ -65,7 +65,8 @@ function parseId(groupDir, funcDir) {
     metric: g[1],
     size: Number(g[2]),
     count: Number(g[3]),
-    topology: { name: g[4], senders: Number(g[5]), receivers: Number(g[6]) },
+    payload: g[4],
+    topology: { name: g[5], senders: Number(g[6]), receivers: Number(g[7]) },
     combo: f[1],
     cap: f[2],
     crate: f[3],
@@ -84,7 +85,7 @@ function cellValue(meta, meanNs) {
 
 // --- Run markers (freshness) --------------------------------------------------
 //
-// The bench binary overwrites <criterionDir>/runs/last-<size>.json at the
+// The bench binary overwrites <criterionDir>/runs/last-<size>-alloc.json at the
 // start of every run (see benchmark/src/run_marker.rs). Charts are built only
 // from estimates written after the marker's timestamp of the requested size,
 // so charts always reflect one defined run and target/criterion never needs
@@ -95,7 +96,7 @@ const RUNS_DIR = "runs";
 // Returns the parsed marker { started_at, ... } or null when absent/invalid.
 function readRunMarker(criterionDir, size) {
   try {
-    const raw = fs.readFileSync(path.join(criterionDir, RUNS_DIR, `last-${size}.json`), "utf8");
+    const raw = fs.readFileSync(path.join(criterionDir, RUNS_DIR, `last-${size}-alloc.json`), "utf8");
     const marker = JSON.parse(raw);
     return typeof marker.started_at === "number" ? marker : null;
   } catch {
@@ -130,6 +131,7 @@ function collect(criterionDir, size, opts = {}) {
       if (mtime < minMtime) continue; // written before the latest run's start
       const meta = parseId(groupDir, funcDir);
       if (!meta || meta.size !== size) continue;
+      if (meta.payload !== "alloc") continue; // charts render alloc mode only
       const key = [
         meta.metric,
         meta.topology.name,

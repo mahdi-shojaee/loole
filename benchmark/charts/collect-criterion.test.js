@@ -12,11 +12,12 @@ const cc = require("./collect-criterion.js");
 // ---------------------------------------------------------------------------
 
 test("parseId parses a full benchmark path", () => {
-  const parsed = cc.parseId("throughput-256-n100000_mpsc-s1000r1", "sync-sync_b10_loole");
+  const parsed = cc.parseId("throughput-256-n100000-alloc_mpsc-s1000r1", "sync-sync_b10_loole");
   assert.deepEqual(parsed, {
     metric: "throughput",
     size: 256,
     count: 100000,
+    payload: "alloc",
     topology: { name: "mpsc", senders: 1000, receivers: 1 },
     combo: "sync-sync",
     cap: "b10",
@@ -24,9 +25,22 @@ test("parseId parses a full benchmark path", () => {
   });
 });
 
+test("parseId parses a shared-payload group dir with shifted topology", () => {
+  const parsed = cc.parseId("throughput-256-n100000-shared_mpmc-s1000r10", "async-sync_b50_flume");
+  assert.equal(parsed.metric, "throughput");
+  assert.equal(parsed.size, 256);
+  assert.equal(parsed.count, 100000);
+  assert.equal(parsed.payload, "shared");
+  assert.deepEqual(parsed.topology, { name: "mpmc", senders: 1000, receivers: 10 });
+  assert.equal(parsed.combo, "async-sync");
+  assert.equal(parsed.cap, "b50");
+  assert.equal(parsed.crate, "flume");
+});
+
 test("parseId parses latency spsc unbounded kanal", () => {
-  const parsed = cc.parseId("latency-32-n50000_spsc-s1r1", "async-sync_unbounded_kanal-std-mutex");
+  const parsed = cc.parseId("latency-32-n50000-alloc_spsc-s1r1", "async-sync_unbounded_kanal-std-mutex");
   assert.equal(parsed.metric, "latency");
+  assert.equal(parsed.payload, "alloc");
   assert.equal(parsed.size, 32);
   assert.equal(parsed.count, 50000);
   assert.deepEqual(parsed.topology, { name: "spsc", senders: 1, receivers: 1 });
@@ -38,7 +52,7 @@ test("parseId parses latency spsc unbounded kanal", () => {
 test("parseId rejects non-matching dirs (select group, report dirs)", () => {
   assert.equal(cc.parseId("select", "async_select_recv_buffer_0"), null);
   assert.equal(cc.parseId("report", "index.html"), null);
-  assert.equal(cc.parseId("throughput-256-n100000_mpsc-s1000r1", "bogus-format"), null);
+  assert.equal(cc.parseId("throughput-256-n100000-alloc_mpsc-s1000r1", "bogus-format"), null);
   assert.equal(cc.parseId("junk", "sync-sync_b10_loole"), null);
 });
 
@@ -169,9 +183,9 @@ test("collect reads new/estimates.json, prefers newest mtime per cell, skips non
     const t = new Date(whenMs);
     fs.utimesSync(path.join(d, "estimates.json"), t, t);
   };
-  write("throughput-32-n1000_spsc-s1r1", "sync-sync_b0_loole", 1e6, 1000);
-  write("throughput-32-n1000_spsc-s1r1", "sync-sync_b0_loole", 2e6, 2000); // newer wins
-  write("latency-32-n1000_spsc-s1r1", "async-async_b1_flume", 4e6, 3000);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 1000);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 2e6, 2000); // newer wins
+  write("latency-32-n1000-alloc_spsc-s1r1", "async-async_b1_flume", 4e6, 3000);
   write("select", "async_select_recv_buffer_0", 1e6, 4000); // ignored
 
   const cells = cc.collect(dir, 32);
@@ -195,8 +209,8 @@ test("collect keeps only the deepest workload (-n) per metric+size", () => {
   };
   // same cell, different workload counts; a *newer mtime* on the smaller run
   // must not win against the deeper run's selection
-  write("throughput-32-n1000_spsc-s1r1", "sync-sync_b0_loole", 1e6, 5000);
-  write("throughput-32-n100000_spsc-s1r1", "sync-sync_b0_loole", 2e9, 1000);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 5000);
+  write("throughput-32-n100000-alloc_spsc-s1r1", "sync-sync_b0_loole", 2e9, 1000);
 
   const cells = cc.collect(dir, 32);
   const tp = cells.filter((c) => c.metric === "throughput");
@@ -206,14 +220,32 @@ test("collect keeps only the deepest workload (-n) per metric+size", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Run markers (freshness): runs/last-<size>.json
+// Run markers (freshness): runs/last-<size>-alloc.json
 // ---------------------------------------------------------------------------
+
+test("collect ignores shared-mode estimates (charts render alloc mode only)", () => {
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
+  const write = (groupDir, funcDir, mean, whenMs) => {
+    const d = path.join(dir, groupDir, funcDir, "new");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "estimates.json"), JSON.stringify({ mean: { point_estimate: mean } }));
+    const t = new Date(whenMs);
+    fs.utimesSync(path.join(d, "estimates.json"), t, t);
+  };
+  write("throughput-32-n1000-shared_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_flume", 1e6, 2000);
+
+  const cells = cc.collect(dir, 32);
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].crate, "flume");
+  assert.equal(cells[0].payload, "alloc");
+});
 
 test("readRunMarker parses a marker file", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
   fs.writeFileSync(
-    path.join(dir, "runs", "last-32.json"),
+    path.join(dir, "runs", "last-32-alloc.json"),
     JSON.stringify({ started_at: 1_700_000_000_000, message_size: 32 }) + "\n"
   );
   const marker = cc.readRunMarker(dir, 32);
@@ -224,9 +256,19 @@ test("readRunMarker returns null when missing or invalid", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   assert.equal(cc.readRunMarker(dir, 32), null);
   fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "runs", "last-32.json"), "not json");
+  fs.writeFileSync(path.join(dir, "runs", "last-32-alloc.json"), "not json");
   assert.equal(cc.readRunMarker(dir, 32), null);
-  fs.writeFileSync(path.join(dir, "runs", "last-32.json"), JSON.stringify({ nope: 1 }));
+  fs.writeFileSync(path.join(dir, "runs", "last-32-alloc.json"), JSON.stringify({ nope: 1 }));
+  assert.equal(cc.readRunMarker(dir, 32), null);
+});
+
+test("readRunMarker ignores the old payload-less marker name", () => {
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
+  fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "runs", "last-32.json"),
+    JSON.stringify({ started_at: 1_700_000_000_000, message_size: 32 }) + "\n"
+  );
   assert.equal(cc.readRunMarker(dir, 32), null);
 });
 
@@ -240,8 +282,8 @@ test("collect with minMtimeMs excludes estimates older than the run start", () =
     fs.utimesSync(path.join(d, "estimates.json"), t, t);
   };
   // fresh cell (written after cutoff) and stale leftover cell (older run)
-  write("throughput-32-n1000_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
-  write("throughput-32-n1000_spsc-s1r1", "sync-sync_b0_flume", 9e9, 500);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_flume", 9e9, 500);
 
   const fresh = cc.collect(dir, 32, { minMtimeMs: 1000 });
   assert.equal(fresh.length, 1);

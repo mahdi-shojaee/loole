@@ -31,6 +31,7 @@ use benchmark::config::{
 use benchmark::ids::{
     bench_id, group_id, topology_token, MetricKind, Topology, CAPACITIES, COMBOS,
 };
+use benchmark::message_type::PayloadKind;
 
 use criterion::{BatchSize, Criterion, Throughput};
 use tokio::runtime::Runtime;
@@ -350,7 +351,12 @@ fn topologies(cfg: &Config) -> [(Topology, usize, usize); 3] {
 }
 
 fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) {
-    let gid = group_id(MetricKind::Throughput, cfg.message_size, cfg.messages_no);
+    let gid = group_id(
+        MetricKind::Throughput,
+        cfg.message_size,
+        cfg.messages_no,
+        cfg.payload,
+    );
     for (i, (topology, senders, receivers)) in topologies(cfg).into_iter().enumerate() {
         if i > 0 {
             // Cool down between topology groups when asked (see `cooldown`).
@@ -398,7 +404,12 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
 }
 
 fn latency_group(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) {
-    let gid = group_id(MetricKind::Latency, cfg.message_size, cfg.latency_rounds);
+    let gid = group_id(
+        MetricKind::Latency,
+        cfg.message_size,
+        cfg.latency_rounds,
+        PayloadKind::Alloc,
+    );
     let mut group = c.benchmark_group(format!("{gid}/{}", topology_token(Topology::Spsc, 1, 1)));
     apply_group_defaults(&mut group, overrides);
     group.throughput(Throughput::Elements(cfg.latency_rounds as u64));

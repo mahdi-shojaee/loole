@@ -10,6 +10,7 @@ use std::fmt::Display;
 
 use crate::benchmark::ALL_CRATES;
 use crate::config::Config;
+use crate::message_type::PayloadKind;
 
 /// Why the automatic chart update does not run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,6 +24,8 @@ pub enum SkipReason {
     /// The run covers only part of the matrix (metric filter, crate subset,
     /// or a positional criterion filter).
     PartialRun,
+    /// Shared-payload run; charts render alloc mode only.
+    NonAllocPayload,
 }
 
 impl Display for SkipReason {
@@ -32,6 +35,12 @@ impl Display for SkipReason {
             SkipReason::Disabled => write!(f, "disabled via --no-charts"),
             SkipReason::MetaCommand => write!(f, "no benchmarks ran"),
             SkipReason::PartialRun => write!(f, "partial run"),
+            SkipReason::NonAllocPayload => {
+                write!(
+                    f,
+                    "payload mode is not alloc (charts render alloc mode only)"
+                )
+            }
         }
     }
 }
@@ -98,6 +107,9 @@ pub fn should_update_charts(
     if is_meta_run(passthrough) {
         return Err(SkipReason::MetaCommand);
     }
+    if cfg.payload != PayloadKind::Alloc {
+        return Err(SkipReason::NonAllocPayload);
+    }
     if !cfg.metric.includes_throughput()
         || !cfg.metric.includes_latency()
         || cfg.crates != ALL_CRATES
@@ -138,6 +150,18 @@ mod tests {
             ),
             Ok(())
         );
+    }
+
+    #[test]
+    fn shared_payload_skips_chart_update() {
+        let cfg = Config {
+            payload: PayloadKind::Shared,
+            ..Config::default()
+        };
+        assert!(matches!(
+            should_update_charts(&cfg, &[], true),
+            Err(SkipReason::NonAllocPayload)
+        ));
     }
 
     #[test]

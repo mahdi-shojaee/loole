@@ -1,4 +1,4 @@
-//! Per-message-size run markers: `<criterion-dir>/runs/last-<size>.json`.
+//! Per-message-size run markers: `<criterion-dir>/runs/last-<size>-<payload>.json`.
 //!
 //! The benchmark binary overwrites the marker for its message size at the
 //! start of every run (constant size, one tiny file per size ever measured).
@@ -45,7 +45,11 @@ pub fn record_run_start_at(criterion_dir: &Path, cfg: &Config) -> io::Result<Pat
         .unwrap_or(0);
     let runs_dir = criterion_dir.join(RUNS_DIR);
     fs::create_dir_all(&runs_dir)?;
-    let path = runs_dir.join(format!("last-{}.json", cfg.message_size));
+    let path = runs_dir.join(format!(
+        "last-{}-{}.json",
+        cfg.message_size,
+        cfg.payload.token()
+    ));
     let crates = cfg
         .crates
         .iter()
@@ -100,8 +104,9 @@ mod tests {
         let dir = test_dir("write");
         let mut cfg = Config::default();
         cfg.message_size = 32;
+        cfg.payload = crate::message_type::PayloadKind::Alloc;
         let path = record_run_start_at(&dir, &cfg).unwrap();
-        assert_eq!(path, dir.join("runs").join("last-32.json"));
+        assert_eq!(path, dir.join("runs").join("last-32-alloc.json"));
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains("\"message_size\":32"), "{body}");
         assert!(body.contains("\"started_at\":"), "{body}");
@@ -116,7 +121,7 @@ mod tests {
         record_run_start_at(&dir, &cfg).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         record_run_start_at(&dir, &cfg).unwrap();
-        let body = fs::read_to_string(dir.join("runs").join("last-256.json")).unwrap();
+        let body = fs::read_to_string(dir.join("runs").join("last-256-alloc.json")).unwrap();
         // Constant size: exactly one marker, and it parses as one line of JSON.
         assert_eq!(body.lines().count(), 1);
         assert!(body.starts_with('{'));
