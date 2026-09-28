@@ -8,7 +8,7 @@ use crate::bench_utils::{
     ping_pong_latency, setup_ping_pong, BenchError, Combo, JoinHandle, LatencyChannel,
     LatencyChannels, LatencyProbe, LatencyResult, ThroughputRun,
 };
-use crate::message_type::Message;
+use crate::message_type::{AnyPayload, Message, PayloadKind};
 use tokio::runtime::Runtime;
 
 pub enum KanalSender<T> {
@@ -46,44 +46,46 @@ fn setup_helper<S, R>(
     cap: Option<usize>,
     msg_no: usize,
     message_size: usize,
+    payload: PayloadKind,
     create_sender: S,
     create_receiver: R,
 ) -> Result<ThroughputRun, BenchError>
 where
-    S: Fn(Sender<Message>, usize, usize) -> JoinHandle<usize>,
-    R: Fn(Receiver<Message>) -> JoinHandle<usize>,
+    S: Fn(Sender<AnyPayload>, usize, usize, PayloadKind) -> JoinHandle<usize>,
+    R: Fn(Receiver<AnyPayload>) -> JoinHandle<usize>,
 {
-    let (tx, rx) = cap.map_or_else(unbounded::<Message>, bounded);
-    let senders = create_senders(tx, senders_no, msg_no, message_size, create_sender);
+    let (tx, rx) = cap.map_or_else(unbounded::<AnyPayload>, bounded);
+    let senders = create_senders(tx, senders_no, msg_no, message_size, payload, create_sender);
     let receivers = create_receivers(rx, receivers_no, create_receiver);
     Ok(ThroughputRun { senders, receivers })
 }
 
 fn create_senders<S>(
-    tx: Sender<Message>,
+    tx: Sender<AnyPayload>,
     senders_no: usize,
     msg_no: usize,
     message_size: usize,
+    payload: PayloadKind,
     create_sender: S,
 ) -> Vec<JoinHandle<usize>>
 where
-    S: Fn(Sender<Message>, usize, usize) -> JoinHandle<usize>,
+    S: Fn(Sender<AnyPayload>, usize, usize, PayloadKind) -> JoinHandle<usize>,
 {
     let mut senders = Vec::with_capacity(senders_no);
     for i in 0..senders_no {
         let n = msg_no / senders_no + if i < msg_no % senders_no { 1 } else { 0 };
-        senders.push(create_sender(tx.clone(), n, message_size));
+        senders.push(create_sender(tx.clone(), n, message_size, payload));
     }
     senders
 }
 
 fn create_receivers<R>(
-    rx: Receiver<Message>,
+    rx: Receiver<AnyPayload>,
     receivers_no: usize,
     create_receiver: R,
 ) -> Vec<JoinHandle<usize>>
 where
-    R: Fn(Receiver<Message>) -> JoinHandle<usize>,
+    R: Fn(Receiver<AnyPayload>) -> JoinHandle<usize>,
 {
     let mut receivers = Vec::with_capacity(receivers_no);
     for _ in 0..receivers_no {
@@ -92,12 +94,18 @@ where
     receivers
 }
 
-fn create_sync_sender(tx: Sender<Message>, n: usize, message_size: usize) -> JoinHandle<usize> {
+fn create_sync_sender(
+    tx: Sender<AnyPayload>,
+    n: usize,
+    message_size: usize,
+    payload: PayloadKind,
+) -> JoinHandle<usize> {
     JoinHandle::Sync(thread::spawn(move || {
         let mut error_count = 0;
         let mut sent_count = 0;
+        let mut cache = None;
         for _ in 0..n {
-            match send(&tx, Message::new(message_size)) {
+            match send(&tx, AnyPayload::fresh(payload, message_size, &mut cache)) {
                 Ok(_) => sent_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -109,13 +117,19 @@ fn create_sync_sender(tx: Sender<Message>, n: usize, message_size: usize) -> Joi
     }))
 }
 
-fn create_async_sender(tx: Sender<Message>, n: usize, message_size: usize) -> JoinHandle<usize> {
+fn create_async_sender(
+    tx: Sender<AnyPayload>,
+    n: usize,
+    message_size: usize,
+    payload: PayloadKind,
+) -> JoinHandle<usize> {
     let tx = tx.to_async();
     JoinHandle::Async(tokio::spawn(async move {
         let mut error_count = 0;
         let mut sent_count = 0;
+        let mut cache = None;
         for _ in 0..n {
-            match send_async(&tx, Message::new(message_size)).await {
+            match send_async(&tx, AnyPayload::fresh(payload, message_size, &mut cache)).await {
                 Ok(_) => sent_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -127,7 +141,7 @@ fn create_async_sender(tx: Sender<Message>, n: usize, message_size: usize) -> Jo
     }))
 }
 
-fn create_sync_receiver(rx: Receiver<Message>) -> JoinHandle<usize> {
+fn create_sync_receiver(rx: Receiver<AnyPayload>) -> JoinHandle<usize> {
     JoinHandle::Sync(thread::spawn(move || {
         let mut received_count = 0;
         while recv(&rx).is_ok() {
@@ -137,7 +151,7 @@ fn create_sync_receiver(rx: Receiver<Message>) -> JoinHandle<usize> {
     }))
 }
 
-fn create_async_receiver(rx: Receiver<Message>) -> JoinHandle<usize> {
+fn create_async_receiver(rx: Receiver<AnyPayload>) -> JoinHandle<usize> {
     let rx = rx.to_async();
     JoinHandle::Async(tokio::spawn(async move {
         let mut received_count = 0;
@@ -154,6 +168,7 @@ pub fn setup_sync_sync(
     buffer_size: Option<usize>,
     msg_no: usize,
     message_size: usize,
+    payload: PayloadKind,
 ) -> Result<ThroughputRun, BenchError> {
     setup_helper(
         senders_no,
@@ -161,6 +176,7 @@ pub fn setup_sync_sync(
         buffer_size,
         msg_no,
         message_size,
+        payload,
         create_sync_sender,
         create_sync_receiver,
     )
@@ -172,6 +188,7 @@ pub fn setup_async_async(
     buffer_size: Option<usize>,
     msg_no: usize,
     message_size: usize,
+    payload: PayloadKind,
 ) -> Result<ThroughputRun, BenchError> {
     setup_helper(
         senders_no,
@@ -179,6 +196,7 @@ pub fn setup_async_async(
         buffer_size,
         msg_no,
         message_size,
+        payload,
         create_async_sender,
         create_async_receiver,
     )
@@ -190,6 +208,7 @@ pub fn setup_async_sync(
     buffer_size: Option<usize>,
     msg_no: usize,
     message_size: usize,
+    payload: PayloadKind,
 ) -> Result<ThroughputRun, BenchError> {
     setup_helper(
         senders_no,
@@ -197,6 +216,7 @@ pub fn setup_async_sync(
         buffer_size,
         msg_no,
         message_size,
+        payload,
         create_async_sender,
         create_sync_receiver,
     )
@@ -208,6 +228,7 @@ pub fn setup_sync_async(
     buffer_size: Option<usize>,
     msg_no: usize,
     message_size: usize,
+    payload: PayloadKind,
 ) -> Result<ThroughputRun, BenchError> {
     setup_helper(
         senders_no,
@@ -215,6 +236,7 @@ pub fn setup_sync_async(
         buffer_size,
         msg_no,
         message_size,
+        payload,
         create_sync_sender,
         create_async_receiver,
     )

@@ -9,12 +9,13 @@ use tokio::runtime::Runtime;
 
 use crate::bench_utils::Combo;
 use crate::benchmark::{setup_throughput, CrateName};
+use crate::message_type::PayloadKind;
 
 /// One untimed SPSC bounded(10) async-async 256-byte transfer of `msg_no`
 /// messages. Returns `(sent, received)`; panics via assert on mismatch only
 /// in tests — here return the counts and let the caller decide.
 pub fn run_once(rt: &Runtime, krate: CrateName, msg_no: usize) -> Option<(usize, usize)> {
-    let run = setup_throughput(rt, krate, Combo::AsyncAsync, 1, 1, Some(10), msg_no, 256).ok()?;
+    let run = setup_throughput(rt, krate, Combo::AsyncAsync, 1, 1, Some(10), msg_no, 256, PayloadKind::Alloc).ok()?;
     Some(rt.block_on(run.join_all()))
 }
 

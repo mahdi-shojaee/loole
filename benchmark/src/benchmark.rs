@@ -115,22 +115,23 @@ pub fn setup_throughput(
     cap: Option<usize>,
     msg_no: usize,
     message_size: usize,
+    payload: crate::message_type::PayloadKind,
 ) -> Result<ThroughputRun, BenchError> {
     let _guard = rt.enter();
     macro_rules! per_crate {
         ($module:ident) => {
             match combo {
                 Combo::SyncSync => {
-                    $module::setup_sync_sync(senders_no, receivers_no, cap, msg_no, message_size)
+                    $module::setup_sync_sync(senders_no, receivers_no, cap, msg_no, message_size, payload)
                 }
                 Combo::AsyncAsync => {
-                    $module::setup_async_async(senders_no, receivers_no, cap, msg_no, message_size)
+                    $module::setup_async_async(senders_no, receivers_no, cap, msg_no, message_size, payload)
                 }
                 Combo::AsyncSync => {
-                    $module::setup_async_sync(senders_no, receivers_no, cap, msg_no, message_size)
+                    $module::setup_async_sync(senders_no, receivers_no, cap, msg_no, message_size, payload)
                 }
                 Combo::SyncAsync => {
-                    $module::setup_sync_async(senders_no, receivers_no, cap, msg_no, message_size)
+                    $module::setup_sync_async(senders_no, receivers_no, cap, msg_no, message_size, payload)
                 }
             }
         };
@@ -148,6 +149,7 @@ pub fn setup_throughput(
                 cap,
                 msg_no,
                 message_size,
+                payload,
             ),
             _ => Err(BenchError::AsyncNotSupported),
         },
@@ -200,6 +202,7 @@ pub fn bench_latency(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message_type::PayloadKind;
 
     fn runtime() -> Runtime {
         tokio::runtime::Builder::new_multi_thread()
@@ -352,6 +355,7 @@ mod tests {
             Some(10),
             1_000,
             8,
+            PayloadKind::Alloc,
         )
         .unwrap();
         let (sent, received) = rt.block_on(run.join_all());
@@ -371,6 +375,7 @@ mod tests {
             Some(10),
             1_000,
             8,
+            PayloadKind::Alloc,
         )
         .unwrap();
         let (sent, received) = rt.block_on(run.join_all());
@@ -382,7 +387,7 @@ mod tests {
     fn throughput_run_transfers_all_messages_mixed_combos() {
         let rt = runtime();
         for combo in [Combo::AsyncSync, Combo::SyncAsync] {
-            let run = setup_throughput(&rt, CrateName::Kanal, combo, 2, 2, None, 500, 8).unwrap();
+            let run = setup_throughput(&rt, CrateName::Kanal, combo, 2, 2, None, 500, 8, PayloadKind::Alloc).unwrap();
             let (sent, received) = rt.block_on(run.join_all());
             assert_eq!((sent, received), (500, 500), "{combo:?}");
         }
@@ -392,7 +397,7 @@ mod tests {
     fn setup_throughput_rejects_unsupported() {
         let rt = runtime();
         assert!(matches!(
-            setup_throughput(&rt, CrateName::Tokio, Combo::SyncSync, 2, 2, Some(1), 10, 8),
+            setup_throughput(&rt, CrateName::Tokio, Combo::SyncSync, 2, 2, Some(1), 10, 8, PayloadKind::Alloc),
             Err(BenchError::MpmcNotSupported)
         ));
         assert!(matches!(
@@ -404,7 +409,8 @@ mod tests {
                 1,
                 Some(0),
                 10,
-                8
+                8,
+                PayloadKind::Alloc
             ),
             Err(BenchError::ZeroCapacityNotSupported)
         ));
@@ -417,10 +423,30 @@ mod tests {
                 1,
                 Some(1),
                 10,
-                8
+                8,
+                PayloadKind::Alloc
             ),
             Err(BenchError::AsyncNotSupported)
         ));
+    }
+
+    #[test]
+    fn throughput_shared_payload_transfers_all_messages() {
+        let rt = runtime();
+        let run = setup_throughput(
+            &rt,
+            CrateName::Loole,
+            Combo::AsyncAsync,
+            1,
+            1,
+            Some(10),
+            500,
+            16384,
+            PayloadKind::Shared,
+        )
+        .unwrap();
+        let (sent, received) = rt.block_on(run.join_all());
+        assert_eq!((sent, received), (500, 500));
     }
 
     #[test]

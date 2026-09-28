@@ -380,6 +380,7 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
                                     cap,
                                     cfg.messages_no,
                                     cfg.message_size,
+                                    cfg.payload,
                                 )
                                 .expect("cell checked by supports_throughput")
                             },
