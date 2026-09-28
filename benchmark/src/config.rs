@@ -7,6 +7,7 @@
 use std::str::FromStr;
 
 use crate::benchmark::{CrateName, ALL_CRATES};
+use crate::message_type::PayloadKind;
 
 pub const DEFAULT_MESSAGE_SIZE: usize = 256;
 pub const DEFAULT_MESSAGES_NO: usize = 100_000;
@@ -80,6 +81,15 @@ pub struct Config {
     /// CPU; without a cooldown, later groups measure throttled performance
     /// and comparisons across runs stop being fair. Zero disables.
     pub cooldown_secs: u64,
+    /// Tokio worker threads for the shared runtime. Zero (default) keeps
+    /// `Runtime::new()` behavior (one worker per CPU).
+    pub worker_threads: usize,
+    /// Run each selected crate in its own process (fairness isolation).
+    pub isolate_crates: bool,
+    /// Skip the pre-timing warmup cell.
+    pub no_warmup_cell: bool,
+    /// Which payload construction the senders use.
+    pub payload: PayloadKind,
 }
 
 impl Default for Config {
@@ -95,6 +105,10 @@ impl Default for Config {
             latency_warmup: DEFAULT_LATENCY_WARMUP,
             no_charts: false,
             cooldown_secs: 0,
+            worker_threads: 0,
+            isolate_crates: false,
+            no_warmup_cell: false,
+            payload: PayloadKind::Alloc,
         }
     }
 }
@@ -152,14 +166,36 @@ pub const PARAMS: &[Param] = &[
         short: None,
         env: "BENCH_COOLDOWN_SECS",
     },
+    Param {
+        long: "--worker-threads",
+        short: None,
+        env: "BENCH_WORKER_THREADS",
+    },
+    Param {
+        long: "--payload",
+        short: None,
+        env: "BENCH_PAYLOAD",
+    },
 ];
 
 /// Value-less boolean suite flags (same shape as [`Param`]; presence = true).
-pub const BOOL_FLAGS: &[Param] = &[Param {
-    long: "--no-charts",
-    short: None,
-    env: "BENCH_NO_CHARTS",
-}];
+pub const BOOL_FLAGS: &[Param] = &[
+    Param {
+        long: "--no-charts",
+        short: None,
+        env: "BENCH_NO_CHARTS",
+    },
+    Param {
+        long: "--isolate-crates",
+        short: None,
+        env: "BENCH_ISOLATE_CRATES",
+    },
+    Param {
+        long: "--no-warmup-cell",
+        short: None,
+        env: "BENCH_NO_WARMUP_CELL",
+    },
+];
 
 /// Which criterion sampling knobs the user set on the CLI. The harness sets
 /// its own quick in-code defaults per benchmark group, so it must skip any
@@ -252,6 +288,12 @@ fn apply_value(cfg: &mut Config, env: &'static str, value: &str) -> Result<(), S
         "BENCH_LATENCY_WARMUP" => cfg.latency_warmup = parse_count(env, value)?,
         "BENCH_NO_CHARTS" => cfg.no_charts = parse_bool(env, value)?,
         "BENCH_COOLDOWN_SECS" => cfg.cooldown_secs = parse_nonnegative(env, value)?,
+        "BENCH_WORKER_THREADS" => {
+            cfg.worker_threads = parse_nonnegative(env, value)? as usize
+        }
+        "BENCH_ISOLATE_CRATES" => cfg.isolate_crates = parse_bool(env, value)?,
+        "BENCH_NO_WARMUP_CELL" => cfg.no_warmup_cell = parse_bool(env, value)?,
+        "BENCH_PAYLOAD" => cfg.payload = PayloadKind::from_env(value)?,
         other => return Err(format!("unknown parameter environment name: {other}")),
     }
     Ok(())
@@ -687,5 +729,59 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.message_size, 32);
         assert_eq!(cfg.crates, vec![CrateName::Tokio]);
+    }
+
+    #[test]
+    fn new_options_defaults() {
+        let cfg = from_env_pairs(&[]).unwrap();
+        assert_eq!(cfg.worker_threads, 0);
+        assert!(!cfg.isolate_crates);
+        assert!(!cfg.no_warmup_cell);
+        assert_eq!(cfg.payload, crate::message_type::PayloadKind::Alloc);
+    }
+
+    #[test]
+    fn new_options_parse() {
+        let cfg = from_env_pairs(&[
+            ("BENCH_WORKER_THREADS", "4"),
+            ("BENCH_ISOLATE_CRATES", "true"),
+            ("BENCH_NO_WARMUP_CELL", "1"),
+            ("BENCH_PAYLOAD", "shared"),
+        ])
+        .unwrap();
+        assert_eq!(cfg.worker_threads, 4);
+        assert!(cfg.isolate_crates);
+        assert!(cfg.no_warmup_cell);
+        assert_eq!(cfg.payload, crate::message_type::PayloadKind::Shared);
+    }
+
+    #[test]
+    fn new_options_reject_garbage() {
+        assert!(from_env_pairs(&[("BENCH_WORKER_THREADS", "abc")]).is_err());
+        assert!(from_env_pairs(&[("BENCH_PAYLOAD", "banana")]).is_err());
+        assert!(from_env_pairs(&[("BENCH_ISOLATE_CRATES", "maybe")]).is_err());
+    }
+
+    #[test]
+    fn split_args_routes_new_flags_to_env() {
+        let (env, rest) = split_args(&s(&[
+            "--worker-threads",
+            "4",
+            "--isolate-crates",
+            "--payload=shared",
+            "spsc",
+        ]))
+        .unwrap();
+        assert_eq!(
+            env,
+            vec![
+                ("BENCH_WORKER_THREADS", "4".to_string()),
+                ("BENCH_ISOLATE_CRATES", "1".to_string()),
+                ("BENCH_PAYLOAD", "shared".to_string()),
+            ]
+        );
+        assert_eq!(rest, s(&["spsc"]));
+        let (env, _) = split_args(&s(&["--no-warmup-cell"])).unwrap();
+        assert_eq!(env, vec![("BENCH_NO_WARMUP_CELL", "1".to_string())]);
     }
 }

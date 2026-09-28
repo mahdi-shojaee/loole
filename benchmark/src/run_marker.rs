@@ -136,6 +136,10 @@ mod tests {
             latency_warmup: 100,
             no_charts: false,
             cooldown_secs: 0,
+            worker_threads: 0,
+            isolate_crates: false,
+            no_warmup_cell: false,
+            payload: crate::message_type::PayloadKind::Alloc,
         };
         let path = record_run_start_at(&dir, &cfg).unwrap();
         let body = fs::read_to_string(path).unwrap();
