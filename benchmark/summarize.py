@@ -31,6 +31,8 @@ Only the standard library is used.
 """
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -248,7 +250,32 @@ def find_summaries(run_dir):
     return found
 
 
+def smoke_warning(run_dir):
+    """Warning header when this run used parallel smoke screening, else None.
+
+    `compare.sh --parallel` writes a SMOKE_PARALLEL marker (pair assignment)
+    into the run dir; numbers produced under shared power/thermal/bandwidth
+    are screening-only, so every summary must say so up front.
+    """
+    marker = os.path.join(run_dir, "SMOKE_PARALLEL")
+    if not os.path.isfile(marker):
+        return None
+    try:
+        with open(marker, encoding="utf-8") as fh:
+            detail = " ".join(line.strip() for line in fh if line.strip())
+    except OSError:
+        detail = ""
+    base = (
+        "WARNING: parallel smoke-only results (shared power/thermal/bandwidth)"
+        " — not valid for verdicts."
+    )
+    return base + (" " + detail if detail else "")
+
+
 def do_summarize(run_dir):
+    warning = smoke_warning(run_dir)
+    if warning is not None:
+        print(warning)
     paths = find_summaries(run_dir)
     if not paths:
         print(f"no repeat summaries found under {run_dir}")
@@ -337,6 +364,16 @@ def run_self_test():
         )
         rc = do_summarize(run_dir)
         assert rc == 0, f"summarize rc={rc}"
+        # SMOKE_PARALLEL marker forces a smoke-only warning header.
+        with open(os.path.join(run_dir, "SMOKE_PARALLEL"), "w", encoding="utf-8") as fh:
+            fh.write("pairs: 0,1 2,3\ncrates: loole flume\n")
+        assert smoke_warning(run_dir) is not None
+        assert smoke_warning(os.path.join(tmp, "no-such-dir")) is None
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = do_summarize(run_dir)
+        assert rc == 0, f"summarize rc={rc}"
+        assert "WARNING: parallel smoke-only results" in buf.getvalue(), buf.getvalue()
     except AssertionError as err:
         print(f"self-test: FAIL ({err})")
         return 1

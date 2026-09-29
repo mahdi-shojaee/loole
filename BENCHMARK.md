@@ -216,6 +216,31 @@ table plus win tally (`wins: loole=X flume=Y`). A result counts when loole
 wins 4 of 5. For placement-stable numbers add `TASKSET="0-7"`; for deeper
 confidence intervals append `--sample-size 40 --measurement-time 10`.
 
+## Parallel smoke screening
+
+For fast multi-crate screening, `compare.sh` can pin each crate to its own
+CPU pair and run disjoint pairs concurrently:
+
+```bash
+benchmark/compare.sh --repeats 2 --crates "loole flume kanal" \
+  --parallel "0,1 2,3 4,5" -- -n 20000 -m 16384 --metric throughput spsc
+```
+
+Pairs map positionally to `--crates` (crate *i* always runs on pair
+*i mod nslots*, every repeat); with more crates than pairs the remainder run
+in a second wave. Each crate builds and measures under its own
+`target/parallel-build/<crate>/` directory, so concurrent runs never share
+cargo or criterion state (first use rebuilds per crate). `--parallel`
+conflicts with `TASKSET` (pick one pinning method).
+
+Pair guidance: any fixed set of homogeneous cores works (separate physical
+cores preferred; P-cores recommended for absolute numbers). Results are
+screening only — crates share power, thermal headroom, and memory bandwidth
+while running together, so never use them for verdicts; the summary prints
+an explicit warning. Verdicts require sequential pinned repeats (see above).
+Parallel runs never touch charts (each worker measures into its own
+criterion directory, and every child is a partial run).
+
 ## Machine descriptor
 
 Every invocation writes `target/criterion/runs/machine-<size>-<payload>-<unix_ms>.json`
