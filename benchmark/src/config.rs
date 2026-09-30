@@ -791,6 +791,14 @@ mod tests {
     }
 
     #[test]
+    fn payload_touched_parses() {
+        let cfg = from_env_pairs(&[("BENCH_PAYLOAD", "touched")]).unwrap();
+        assert_eq!(cfg.payload, crate::message_type::PayloadKind::Touched);
+        let (env, _) = split_args(&s(&["--payload=touched"])).unwrap();
+        assert_eq!(env, vec![("BENCH_PAYLOAD", "touched".to_string())]);
+    }
+
+    #[test]
     fn split_args_routes_new_flags_to_env() {
         let (env, rest) = split_args(&s(&[
             "--worker-threads",

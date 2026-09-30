@@ -53,7 +53,7 @@ const COMBO_FLAVORS = {
 
 // --- Parsing criterion's directory names -------------------------------------
 
-const GROUP_RE = /^(throughput|latency)-(\d+)-n(\d+)-(alloc|shared)_(spsc|mpsc|mpmc)-s(\d+)r(\d+)$/;
+const GROUP_RE = /^(throughput|latency)-(\d+)-n(\d+)-(alloc|shared|touched)_(spsc|mpsc|mpmc)-s(\d+)r(\d+)$/;
 const FUNC_RE = /^(sync-sync|async-async|async-sync|sync-async)_(b\d+|unbounded)_(.+)$/;
 
 function parseId(groupDir, funcDir) {

@@ -84,12 +84,16 @@ impl std::fmt::Display for Message {
 
 /// Which payload construction senders use. `Alloc` is the historical
 /// behavior (a fresh zeroed `Vec` per message: measures allocator +
-/// channel). `Shared` clones one preallocated `Arc<Vec<u8>>` per send
-/// (measures channel + task machinery, almost no allocator traffic).
+/// channel). `Shared` clones one preallocated `Arc<Vec<u8>>` per send: a
+/// channel-isolation control that removes allocator traffic, not a model of
+/// real traffic. `Touched` allocates a distinct `Vec` per send and fills it
+/// with a deterministic counter pattern: models real payloads, whose bytes
+/// are all touched.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PayloadKind {
     Alloc,
     Shared,
+    Touched,
 }
 
 impl PayloadKind {
@@ -97,6 +101,7 @@ impl PayloadKind {
         match self {
             PayloadKind::Alloc => "alloc",
             PayloadKind::Shared => "shared",
+            PayloadKind::Touched => "touched",
         }
     }
 
@@ -104,7 +109,10 @@ impl PayloadKind {
         match s.trim() {
             "alloc" => Ok(PayloadKind::Alloc),
             "shared" => Ok(PayloadKind::Shared),
-            other => Err(format!("unknown payload '{other}' (valid: alloc, shared)")),
+            "touched" => Ok(PayloadKind::Touched),
+            other => Err(format!(
+                "unknown payload '{other}' (valid: alloc, shared, touched)"
+            )),
         }
     }
 }
@@ -120,7 +128,9 @@ pub enum AnyPayload {
 impl AnyPayload {
     /// Build one send unit. In `Shared` mode the allocation happens once per
     /// sender task (first call fills `cache`); every later call clones the
-    /// `Arc` (refcount bump, no 16KB traffic).
+    /// `Arc` (refcount bump, no 16KB traffic). In `Touched` mode every call
+    /// allocates distinctly and writes a deterministic counter pattern over
+    /// all bytes (`cache` untouched).
     pub fn fresh(
         kind: PayloadKind,
         size: usize,
@@ -138,6 +148,13 @@ impl AnyPayload {
                     }
                 };
                 AnyPayload::Shared(arc)
+            }
+            PayloadKind::Touched => {
+                let mut v = vec![0u8; size];
+                for (i, b) in v.iter_mut().enumerate() {
+                    *b = (i.wrapping_mul(31) & 0xFF) as u8;
+                }
+                AnyPayload::Owned(Message(v))
             }
         }
     }
@@ -164,9 +181,32 @@ mod tests {
     fn payload_kind_tokens_and_env() {
         assert_eq!(PayloadKind::Alloc.token(), "alloc");
         assert_eq!(PayloadKind::Shared.token(), "shared");
+        assert_eq!(PayloadKind::Touched.token(), "touched");
         assert_eq!(PayloadKind::from_env("alloc").unwrap(), PayloadKind::Alloc);
         assert_eq!(PayloadKind::from_env("shared").unwrap(), PayloadKind::Shared);
+        assert_eq!(PayloadKind::from_env("touched").unwrap(), PayloadKind::Touched);
         assert!(PayloadKind::from_env("banana").is_err());
+    }
+
+    #[test]
+    fn touched_payload_has_distinct_touched_content() {
+        let mut cache = None;
+        let a = AnyPayload::fresh(PayloadKind::Touched, 300, &mut cache);
+        let b = AnyPayload::fresh(PayloadKind::Touched, 300, &mut cache);
+        assert_eq!((a.len(), b.len()), (300, 300));
+        // Deterministic counter pattern: byte i holds (i * 31) mod 256.
+        // Touched ignores the cache (every message is a distinct allocation).
+        assert!(cache.is_none());
+        match (&a, &b) {
+            (AnyPayload::Owned(x), AnyPayload::Owned(y)) => {
+                assert_eq!(x.0[0], 0);
+                assert_eq!(x.0[1], 31);
+                assert_eq!(x.0[9], (9 * 31 % 256) as u8);
+                assert_eq!(x.0[299], (299 * 31 % 256) as u8);
+                assert_ne!(x.0.as_ptr(), y.0.as_ptr(), "distinct allocations");
+            }
+            _ => panic!("expected owned payloads"),
+        }
     }
 
     #[test]

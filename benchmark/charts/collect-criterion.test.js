@@ -37,6 +37,18 @@ test("parseId parses a shared-payload group dir with shifted topology", () => {
   assert.equal(parsed.crate, "flume");
 });
 
+test("parseId parses a touched-payload group dir", () => {
+  const parsed = cc.parseId("throughput-16384-n20000-touched_spsc-s1r1", "async-async_b100_loole");
+  assert.equal(parsed.metric, "throughput");
+  assert.equal(parsed.size, 16384);
+  assert.equal(parsed.count, 20000);
+  assert.equal(parsed.payload, "touched");
+  assert.deepEqual(parsed.topology, { name: "spsc", senders: 1, receivers: 1 });
+  assert.equal(parsed.combo, "async-async");
+  assert.equal(parsed.cap, "b100");
+  assert.equal(parsed.crate, "loole");
+});
+
 test("parseId parses latency spsc unbounded kanal", () => {
   const parsed = cc.parseId("latency-32-n50000-alloc_spsc-s1r1", "async-sync_unbounded_kanal-std-mutex");
   assert.equal(parsed.metric, "latency");

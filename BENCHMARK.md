@@ -73,7 +73,7 @@ Suite options (each is also settable via its environment variable):
 | `--worker-threads` | | `BENCH_WORKER_THREADS` | `0` | tokio worker count (0 = one per CPU) |
 | `--isolate-crates` | | `BENCH_ISOLATE_CRATES` | off | one process per crate |
 | `--no-warmup-cell` | | `BENCH_NO_WARMUP_CELL` | off | skip pre-timing warmup |
-| `--payload` | | `BENCH_PAYLOAD` | `alloc` | alloc (fresh Vec per send) or shared (one Arc per sender) |
+| `--payload` | | `BENCH_PAYLOAD` | `alloc` | `alloc` (fresh Vec per send, allocator-inclusive), `shared` (one Arc per sender: channel-isolation control, not a workload model), or `touched` (distinct content per send, realistic cache footprint) |
 
 All native criterion options pass straight through:
 
@@ -199,9 +199,12 @@ the harness now neutralizes each by default or by flag:
    `TASKSET="0-7" benchmark/compare.sh ...`. Fix the runtime size with
    `--worker-threads` when comparing scheduler-sensitive cells.
 3. **Payload churn.** At 16KB, fresh-`Vec`-per-send measures the allocator
-   more than the channel. Compare `--payload shared` (one `Arc` per sender,
-   refcount per send) for the channel-truth number alongside the default
-   `alloc` history number. Chart JSONs render `alloc` mode only.
+   more than the channel. Two lenses complement the default `alloc` history
+   number: `--payload shared` clones one preallocated `Arc` per send — a
+   channel-isolation control that removes allocator traffic, not a model of
+   real traffic; `--payload touched` fills every message with a deterministic
+   counter pattern, modeling real payloads that touch all their bytes.
+   Chart JSONs render `alloc` mode only.
 
 ## Graded 5-repeat recipe
 
