@@ -56,8 +56,13 @@ if [ "$PARALLEL_GIVEN" -eq 0 ]; then
     crates_arr=($order)
     for crate in "${crates_arr[@]}"; do
       if [ -n "$TASKSET" ]; then prefix="taskset -c $TASKSET"; else prefix=""; fi
+      # Pin the build and criterion dirs exactly like the parallel mode does
+      # per worker: ambient CARGO_TARGET_DIR/CRITERION_HOME would divert the
+      # bench binary's estimates elsewhere while snapshots below keep reading
+      # the repo-rooted dir — silently grading stale data as fresh repeats.
       # shellcheck disable=SC2086
-      $prefix cargo bench -p benchmark --bench criterion_benchmarks -- --crates "$crate" "${BENCH_ARGS[@]}" || exit $?
+      $prefix env CARGO_TARGET_DIR="$REPO_ROOT/target" CRITERION_HOME="$REPO_ROOT/target/criterion" \
+        cargo bench -p benchmark --bench criterion_benchmarks -- --crates "$crate" "${BENCH_ARGS[@]}" || exit $?
       snapshot_one "$crate" "$REPO_ROOT/target/criterion" "$i"
     done
     # alternate first-crate next repeat
