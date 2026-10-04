@@ -61,9 +61,9 @@ pub struct Queue<T> {
     /// full / one parked receiver while empty), where every message would
     /// otherwise pay 3+ `HashMap` ops (insert + remove + contains). Falls
     /// back to `queue`+`map` for 0 or 2+ entries.
-    inline: Option<(usize, T)>,
-    queue: VecDeque<usize>,
-    map: HashMap<usize, T, IdentityBuildHasher>,
+    inline: Option<(u64, T)>,
+    queue: VecDeque<u64>,
+    map: HashMap<u64, T, IdentityBuildHasher>,
 }
 
 impl<T> Queue<T> {
@@ -84,7 +84,7 @@ impl<T> Queue<T> {
     }
 
     #[inline(always)]
-    pub fn enqueue(&mut self, id: usize, value: T) {
+    pub fn enqueue(&mut self, id: u64, value: T) {
         // Fast path: totally empty → inline (covers SPSC single parker).
         if self.inline.is_none() && self.queue.is_empty() {
             self.inline = Some((id, value));
@@ -95,7 +95,7 @@ impl<T> Queue<T> {
     }
 
     #[inline(always)]
-    pub fn enqueue_front(&mut self, id: usize, value: T) {
+    pub fn enqueue_front(&mut self, id: u64, value: T) {
         // Only used to put back a just-dequeued stream entry (cold path):
         // after any `dequeue` the inline slot is empty, so restoring there
         // keeps FIFO order. If somehow occupied, flush it to the queue front
@@ -114,7 +114,7 @@ impl<T> Queue<T> {
     }
 
     #[inline(always)]
-    pub fn dequeue(&mut self) -> Option<(usize, T)> {
+    pub fn dequeue(&mut self) -> Option<(u64, T)> {
         if let Some(entry) = self.inline.take() {
             return Some(entry);
         }
@@ -124,7 +124,7 @@ impl<T> Queue<T> {
     }
 
     #[inline(always)]
-    pub fn contains(&self, id: usize) -> bool {
+    pub fn contains(&self, id: u64) -> bool {
         if let Some((inline_id, _)) = &self.inline {
             if *inline_id == id {
                 return true;
@@ -134,7 +134,7 @@ impl<T> Queue<T> {
     }
 
     #[inline(always)]
-    pub fn get(&self, id: usize) -> Option<&T> {
+    pub fn get(&self, id: u64) -> Option<&T> {
         if let Some((inline_id, val)) = &self.inline {
             if *inline_id == id {
                 return Some(val);
@@ -146,7 +146,7 @@ impl<T> Queue<T> {
     /// Mutable access to a queued value by id, without disturbing its queue
     /// position. Used to update a parked entry's waker in place.
     #[inline(always)]
-    pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
+    pub fn get_mut(&mut self, id: u64) -> Option<&mut T> {
         if let Some((inline_id, val)) = &mut self.inline {
             if *inline_id == id {
                 return Some(val);
@@ -155,7 +155,7 @@ impl<T> Queue<T> {
         self.map.get_mut(&id)
     }
 
-    pub fn remove(&mut self, id: usize) -> Option<(usize, T)> {
+    pub fn remove(&mut self, id: u64) -> Option<(u64, T)> {
         if let Some((inline_id, _)) = &self.inline {
             if *inline_id == id {
                 return self.inline.take();
@@ -193,13 +193,13 @@ impl<T> Default for Queue<T> {
 }
 
 pub struct Iter<'a, T> {
-    inline: Option<(usize, &'a T)>,
-    keys: std::collections::vec_deque::Iter<'a, usize>,
-    values: &'a HashMap<usize, T, IdentityBuildHasher>,
+    inline: Option<(u64, &'a T)>,
+    keys: std::collections::vec_deque::Iter<'a, u64>,
+    values: &'a HashMap<u64, T, IdentityBuildHasher>,
 }
 
 impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = (usize, &'a T);
+    type Item = (u64, &'a T);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -212,7 +212,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 }
 
 impl<'a, T> IntoIterator for &'a Queue<T> {
-    type Item = (usize, &'a T);
+    type Item = (u64, &'a T);
     type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {

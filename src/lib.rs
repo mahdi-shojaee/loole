@@ -49,7 +49,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::ready;
 use std::task::{Context, Poll};
@@ -374,7 +374,11 @@ struct SharedState<T> {
     queue: VecDeque<T>,
     closed: bool,
     cap: Option<usize>,
-    next_id: usize,
+    /// Ids for parked senders/receivers. `u64` so the counter cannot wrap on
+    /// any target (32-bit included): a wrapped id could be falsely confirmed
+    /// by a stale `consumed_park` watermark or clobber a still-parked entry
+    /// in the pending queues' id map.
+    next_id: u64,
 }
 
 impl<T> SharedState<T> {
@@ -407,7 +411,7 @@ impl<T> SharedState<T> {
         self.len() == 0
     }
 
-    fn get_next_id(&mut self) -> usize {
+    fn get_next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         id
@@ -653,7 +657,7 @@ pub struct SendFuture<'a, T> {
 
 #[derive(Debug)]
 struct SendParked {
-    id: usize,
+    id: u64,
 }
 
 impl<'a, T> SendFuture<'a, T> {
@@ -804,7 +808,8 @@ impl<'a, T> Future for SendFuture<'a, T> {
             // us. `pending_sends` is one FIFO queue, so the watermark is
             // monotonic and `>=` is exact — if it has reached our id, our
             // message was already accepted into the channel (enqueued before
-            // the `Release` store, which our `Acquire` load pairs with).
+            // the `Release` store, which our `Acquire` load pairs with). Ids
+            // are `u64`, so the watermark cannot wrap around a live id.
             // This avoids taking the channel lock right at the moment the
             // scheduler runs us, where it would contend with the receiver's
             // ongoing pop loop (spin, and at worst a futex stall that
@@ -913,7 +918,7 @@ impl<'a, T> Drop for SendFuture<'a, T> {
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
 pub struct RecvFuture<'a, T> {
-    id: Option<usize>,
+    id: Option<u64>,
     receiver: Cow<'a, Receiver<T>>,
     stream: bool,
     registered: bool,
@@ -1048,14 +1053,14 @@ impl<'a, T> Drop for RecvFuture<'a, T> {
 #[derive(Debug)]
 struct ChannelCore<T> {
     state: Mutex<SharedState<T>>,
-    consumed_park: AtomicUsize,
+    consumed_park: AtomicU64,
 }
 
 impl<T> ChannelCore<T> {
     fn new(state: SharedState<T>) -> Self {
         Self {
             state: Mutex::new(state),
-            consumed_park: AtomicUsize::new(0),
+            consumed_park: AtomicU64::new(0),
         }
     }
 
