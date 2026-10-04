@@ -216,14 +216,31 @@ def do_snapshot(criterion_dir, out, cell_filter, repeat):
     cells = {}
     copied = 0
     for cell_id, est in matches:
+        # Read before copying: a torn/truncated estimates.json (e.g. an
+        # interrupted run) is skipped loudly instead of aborting a
+        # multi-hour repeat protocol, and never enters the snapshot.
+        try:
+            mean_ns = read_mean(est)
+        except (OSError, ValueError, KeyError) as err:
+            print(f"warning: skipping unreadable {est}: {err}", file=sys.stderr)
+            continue
         rel = os.path.relpath(est, criterion_dir)
         dest = os.path.join(out, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(est, dest)
         copied += 1
-        mean_ns = read_mean(est)
         base, crate = split_crate(cell_id)
         cells.setdefault(base, {})[crate] = msgs_per_s(cell_id, mean_ns)
+    if copied == 0:
+        # A zero-file snapshot means the cell filter, criterion dir, or bench
+        # run mismatched; compare.sh aborts on this instead of grading five
+        # empty repeats as a protocol result.
+        print(
+            f"error: no estimates matched under {criterion_dir} "
+            f"(cell filter: {cell_filter!r}); nothing snapshotted",
+            file=sys.stderr,
+        )
+        return 1
     if repeat is None:
         m = re.search(r"repeat-(\d+)", out)
         repeat = int(m.group(1)) if m else 0
@@ -374,6 +391,43 @@ def run_self_test():
             rc = do_summarize(run_dir)
         assert rc == 0, f"summarize rc={rc}"
         assert "WARNING: parallel smoke-only results" in buf.getvalue(), buf.getvalue()
+        # A torn/truncated estimates.json must be skipped loudly (warning on
+        # stderr), not copied, and must not abort the multi-hour protocol.
+        bad_dir = os.path.join(tmp, "bad")
+        bad_cell = "throughput-bad-n1-alloc/spsc-s1r1/async-async_b1_loole"
+        good_cell = "throughput-bad-n1-alloc/spsc-s1r1/async-async_b1_flume"
+        write_fixture_estimates(
+            os.path.join(bad_dir, good_cell, "new", "estimates.json"), 5_000_000
+        )
+        torn_path = os.path.join(bad_dir, bad_cell, "new", "estimates.json")
+        write_fixture_estimates(torn_path, 5_000_000)
+        with open(torn_path, "w", encoding="utf-8") as fh:
+            fh.write('{"mean": {"point_')  # truncated mid-file
+        snap_bad = os.path.join(tmp, "snap-bad")
+        err_buf = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err_buf):
+            rc = do_snapshot(bad_dir, snap_bad, "throughput-bad", 2)
+        assert rc == 0, f"snapshot over torn file rc={rc}"
+        assert "warning" in err_buf.getvalue(), err_buf.getvalue()
+        assert not os.path.exists(
+            os.path.join(snap_bad, bad_cell, "new", "estimates.json")
+        ), "unreadable estimates must not be copied"
+        with open(os.path.join(snap_bad, "summary.json"), encoding="utf-8") as fh:
+            snap_doc = json.load(fh)
+        assert "loole" not in snap_doc["cells"].get(
+            "throughput-bad-n1-alloc/spsc-s1r1/async-async_b1", {}
+        ), "torn loole cell must be excluded from the summary"
+        assert "flume" in snap_doc["cells"][
+            "throughput-bad-n1-alloc/spsc-s1r1/async-async_b1"
+        ], "healthy flume cell must survive"
+        # An empty snapshot (filter/dir mismatch) must fail loudly: silent
+        # success would burn a full repeat protocol on nothing.
+        snap_empty = os.path.join(tmp, "snap-empty")
+        err_buf2 = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err_buf2):
+            rc = do_snapshot(bad_dir, snap_empty, "no-such-cell", 3)
+        assert rc != 0, "empty snapshot must not report success"
+        assert "error" in err_buf2.getvalue(), err_buf2.getvalue()
     except AssertionError as err:
         print(f"self-test: FAIL ({err})")
         return 1
