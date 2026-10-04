@@ -2,7 +2,11 @@
 # Graded comparison protocol: N repeats, crates measured in separate
 # processes, first-crate alternates per repeat (cancels cold-start order tax).
 # Usage: benchmark/compare.sh --repeats 5 --crates "loole flume" -- [bench args]
+#        benchmark/compare.sh --crates "loole,kanal (std-mutex)" -- [bench args]
 #   Optional env: TASKSET="0-7" prefixes runs with taskset -c; OUTDIR override.
+#   --crates accepts a space-separated list ("loole flume") or a comma-separated
+#   one ("loole,kanal (std-mutex)") — names containing spaces must use commas,
+#   like the bench's own parse_crates.
 # Parallel smoke screening: --parallel "0,1 2,3" pins each crate to its own
 #   CPU pair and runs one wave of pairs concurrently. Pairs map positionally
 #   to --crates (crate i always runs on pair i mod nslots, every repeat); with
@@ -14,7 +18,7 @@
 #   for verdicts (the summary prints an explicit warning). --parallel conflicts
 #   with TASKSET (pick one pinning method).
 set -u
-REPEATS=5; CRATES="loole flume"; OUTDIR=""; TASKSET="${TASKSET:-}"; PARALLEL=""; PARALLEL_GIVEN=0
+REPEATS=5; CRATES="loole flume"; OUTDIR="${OUTDIR:-}"; TASKSET="${TASKSET:-}"; PARALLEL=""; PARALLEL_GIVEN=0
 BENCH_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -23,7 +27,7 @@ while [ $# -gt 0 ]; do
     --outdir) OUTDIR="$2"; shift 2;;
     --parallel) PARALLEL="$2"; PARALLEL_GIVEN=1; shift 2;;
     --) shift; BENCH_ARGS=("$@"); break;;
-    *) echo "usage: compare.sh --repeats N --crates \"a b\" [--outdir D] [--parallel \"0,1 2,3\"] -- [bench args]" >&2; exit 2;;
+    *) echo "usage: compare.sh --repeats N --crates \"a b\"|\"a,c d\" [--outdir D] [--parallel \"0,1 2,3\"] -- [bench args]" >&2; exit 2;;
   esac
 done
 TS=$(date -u +%Y-%m-%d-%H-%M)
@@ -35,7 +39,15 @@ OUTDIR="${OUTDIR:-$REPO_ROOT/target/bench-runs/$TS}"
 SUMMARIZE="$REPO_ROOT/benchmark/summarize.py"
 mkdir -p "$OUTDIR"
 # shellcheck disable=SC2206
-all_crates=($CRATES)
+# Parse --crates into an array. Comma-separated names may contain spaces
+# (e.g. "kanal (std-mutex)"); a plain space-separated list keeps working.
+if [[ "$CRATES" == *,* ]]; then
+  mapfile -t all_crates < <(printf '%s' "$CRATES" | tr ',' '\n' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$')
+else
+  # shellcheck disable=SC2206
+  all_crates=($CRATES)
+fi
 ncrates=${#all_crates[@]}
 if [ "$ncrates" -eq 0 ]; then echo "error: --crates needs at least one crate" >&2; exit 2; fi
 
@@ -50,11 +62,9 @@ snapshot_one() { # $1=crate $2=criterion-dir $3=repeat
 
 if [ "$PARALLEL_GIVEN" -eq 0 ]; then
   i=1
-  order="$CRATES"
+  order=("${all_crates[@]}")
   while [ "$i" -le "$REPEATS" ]; do
-    # shellcheck disable=SC2206
-    crates_arr=($order)
-    for crate in "${crates_arr[@]}"; do
+    for crate in "${order[@]}"; do
       if [ -n "$TASKSET" ]; then prefix="taskset -c $TASKSET"; else prefix=""; fi
       # Pin the build and criterion dirs exactly like the parallel mode does
       # per worker: ambient CARGO_TARGET_DIR/CRITERION_HOME would divert the
@@ -65,8 +75,12 @@ if [ "$PARALLEL_GIVEN" -eq 0 ]; then
         cargo bench -p benchmark --bench criterion_benchmarks -- --crates "$crate" "${BENCH_ARGS[@]}" || exit $?
       snapshot_one "$crate" "$REPO_ROOT/target/criterion" "$i"
     done
-    # alternate first-crate next repeat
-    order="$(echo "$order" | tr ' ' '\n' | tac | tr '\n' ' ')"
+    # alternate first-crate next repeat: reverse the order array in place
+    for ((j = 0; j < ncrates / 2; j++)); do
+      tmp="${order[j]}"
+      order[j]="${order[ncrates - 1 - j]}"
+      order[ncrates - 1 - j]="$tmp"
+    done
     i=$((i + 1))
   done
 else
