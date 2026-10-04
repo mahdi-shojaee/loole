@@ -20,6 +20,13 @@ pub const DEFAULT_LATENCY_WARMUP: usize = 1_000;
 /// wrapper CLI and hands its args to criterion directly.
 pub const CHILD_ENV: &str = "LOOLE_BENCH_CHILD";
 
+/// Set (together with [`CHILD_ENV`]) only for the per-crate children of an
+/// `--isolate-crates` run. The wrapper records the run marker once for the
+/// whole matrix before the first child; each child writing its own marker
+/// would timestamp the run at the last child's start and the freshness
+/// filter would drop every earlier crate's estimates from the charts.
+pub const ISOLATE_CHILD_ENV: &str = "LOOLE_BENCH_ISOLATE_CHILD";
+
 /// Which metric suite(s) to register benchmarks for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Metric {
@@ -455,6 +462,9 @@ pub fn isolate_envs(
                 .cloned()
                 .collect();
             child.push(("BENCH_CRATES", name.clone()));
+            // The wrapper records the run marker for the full matrix before
+            // the first child; isolate children must not write their own.
+            child.push((ISOLATE_CHILD_ENV, "1".to_string()));
             child
         })
         .collect()
@@ -838,7 +848,31 @@ mod tests {
     fn isolate_envs_single_crate_is_identity() {
         let base: Vec<(&'static str, String)> = vec![];
         let out = isolate_envs(&base, &["loole".to_string()]);
-        assert_eq!(out, vec![vec![("BENCH_CRATES", "loole".to_string())]]);
+        assert_eq!(
+            out,
+            vec![vec![
+                ("BENCH_CRATES", "loole".to_string()),
+                (ISOLATE_CHILD_ENV, "1".to_string()),
+            ]]
+        );
+    }
+
+    #[test]
+    fn isolate_envs_tags_children_to_skip_marker_writes() {
+        // Every isolate child must carry the marker-skip env: the wrapper
+        // records the run marker once for the full matrix before the first
+        // child, so a child writing its own (single-crate, later-timestamped)
+        // marker would make the freshness filter drop every earlier crate's
+        // estimates from the chart rebuild.
+        let base: Vec<(&'static str, String)> = vec![];
+        let out = isolate_envs(&base, &["loole".to_string(), "flume".to_string()]);
+        assert_eq!(out.len(), 2);
+        for child in &out {
+            assert!(
+                child.contains(&(ISOLATE_CHILD_ENV, "1".to_string())),
+                "isolate child missing {ISOLATE_CHILD_ENV}: {child:?}"
+            );
+        }
     }
 
     #[test]

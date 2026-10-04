@@ -98,6 +98,18 @@ fn wrapper_main() -> ! {
             }) {
                 write_machine_sidecar(&cfg, &env_pairs);
                 if cfg.isolate_crates && cfg.crates.len() > 1 {
+                    // Record the run marker once, for the full matrix,
+                    // BEFORE the first child: children must not write their
+                    // own markers — each child's (later) start time would
+                    // become the freshness floor and the chart rebuild would
+                    // drop every earlier crate's estimates, silently
+                    // rewriting committed charts from one crate's data.
+                    if !benchmark::chart_update::is_meta_run(&passthrough) {
+                        if let Err(err) = benchmark::run_marker::record_run_start(&cfg) {
+                            eprintln!("error: cannot record run marker: {err}");
+                            exit(2);
+                        }
+                    }
                     // One child per crate, each measuring exactly one
                     // crate with otherwise identical workload env, so
                     // heap/code/frequency warmup is paid equally by every
@@ -286,8 +298,13 @@ fn criterion_benchmarks(c: &mut Criterion) {
     // Mark this run's start; collect-criterion.js only trusts estimates
     // written after it, so stale cells can never leak into charts. Meta
     // operations (--list/--help/…) write no estimates, so they leave the
-    // markers of the last real run alone.
-    if !benchmark::chart_update::is_meta_run(&args) {
+    // markers of the last real run alone. Isolate-mode children are covered
+    // by the wrapper's single full-matrix marker written before the first
+    // child, so they must not overwrite it with their own (later, partial)
+    // marker.
+    if !benchmark::chart_update::is_meta_run(&args)
+        && std::env::var_os(benchmark::config::ISOLATE_CHILD_ENV).is_none()
+    {
         if let Err(err) = benchmark::run_marker::record_run_start(&cfg) {
             eprintln!("error: cannot record run marker: {err}");
             exit(2);
