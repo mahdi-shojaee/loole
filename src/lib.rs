@@ -582,21 +582,23 @@ fn try_recv<'a, T>(
         // Bounded channels refill one parked send per recv.
         if guard.cap.is_some() {
             if let Some((cid, send)) = guard.pending_sends.dequeue() {
-                // Publish the consumed id (FIFO => the watermark is monotonic)
-                // so the woken sender can confirm without the channel lock.
-                // The message is already enqueued at this point, so the
-                // `Release` store is paired with the parked sender's `Acquire`
-                // load: resolving `Ok` is only ever observed after delivery.
-                core.consumed_park.store(cid, Ordering::Release);
                 match send {
                     PendingSend::Parked(m2, signal) => {
                         guard.queue.push_back(m2);
+                        // Publish the consumed id (FIFO => the watermark is
+                        // monotonic) so the woken sender can confirm without
+                        // the channel lock. The refill is enqueued first, so
+                        // the `Release` store is paired with the parked
+                        // sender's `Acquire` load: resolving `Ok` is only
+                        // ever observed after delivery.
+                        core.consumed_park.store(cid, Ordering::Release);
                         signal.mark_taken();
                         drop(guard);
                         signal.wake();
                     }
                     PendingSend::Gift(m2) => {
                         guard.queue.push_back(m2);
+                        core.consumed_park.store(cid, Ordering::Release);
                     }
                 }
             }
@@ -1642,19 +1644,22 @@ impl<T> Receiver<T> {
             .map_or(0, |cap| cap.min(guard.pending_sends.len()));
         for _ in 0..n {
             if let Some((cid, send)) = guard.pending_sends.dequeue() {
-                // Publish the consumed id so woken async senders take the
-                // lock-free confirm path (see `ChannelCore::consumed_park`).
-                self.inner
-                    .core
-                    .consumed_park
-                    .store(cid, Ordering::Release);
                 match send {
                     PendingSend::Parked(m, signal) => {
                         guard.queue.push_back(m);
+                        // Publish the consumed id after the refill is
+                        // enqueued, so woken async senders taking the
+                        // lock-free confirm path (see
+                        // `ChannelCore::consumed_park`) never observe the
+                        // watermark ahead of the queue it vouches for.
+                        self.inner.core.consumed_park.store(cid, Ordering::Release);
                         signal.mark_taken();
                         signal.wake();
                     }
-                    PendingSend::Gift(m) => guard.queue.push_back(m),
+                    PendingSend::Gift(m) => {
+                        guard.queue.push_back(m);
+                        self.inner.core.consumed_park.store(cid, Ordering::Release);
+                    }
                 }
             }
         }
