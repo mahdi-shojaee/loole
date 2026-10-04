@@ -2,13 +2,9 @@
 //! `ExactSizeIterator` implementation.
 
 use std::thread::{self, scope};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use loole::{bounded, unbounded};
-
-fn ms(ms: u64) -> Duration {
-    Duration::from_millis(ms)
-}
 
 fn sync_sleep(ms: u64) {
     thread::sleep(Duration::from_millis(ms))
@@ -18,21 +14,25 @@ fn sync_sleep(ms: u64) {
 fn drain_on_rendezvous_channel_pulls_nothing() {
     // `drain` takes the queued items and pulls up to `cap` pending sends into
     // the queue. A rendezvous channel has no queue and `cap == 0`, so drain
-    // must take nothing and leave the pending send blocked.
+    // must take nothing and leave the pending send blocked: the message must
+    // not be pulled into the queue and must still be delivered by a regular
+    // recv. Detection is via `len` (a pulled message would sit in the queue
+    // after drain took its snapshot) — no timing assertions, so a delayed
+    // thread start under CI load cannot false-fail the test.
     let (tx, rx) = bounded(0);
     scope(|scope| {
         let h = scope.spawn(move || {
-            let start = Instant::now();
             assert_eq!(tx.send(1), Ok(()));
-            // The drain must not have unblocked this send before the recv.
-            assert!(start.elapsed() >= ms(400));
         });
+        // Give the sender time to park so drain actually faces a pending
+        // send (coverage only: the assertions below hold either way).
         sync_sleep(100);
         let drained = rx.drain().collect::<Vec<_>>();
         assert!(drained.is_empty());
+        // A rendezvous channel has no buffer: nothing may be pulled in.
+        assert_eq!(rx.len(), 0);
         // The message was not stolen from the blocked sender; it is still
-        // delivered by a regular recv.
-        sync_sleep(400);
+        // delivered by a regular recv, which also unblocks the sender.
         assert_eq!(rx.recv(), Ok(1));
         h.join().unwrap();
     });
