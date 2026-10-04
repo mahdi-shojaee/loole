@@ -104,6 +104,34 @@ function readRunMarker(criterionDir, size) {
   }
 }
 
+// Crate names exactly as `CrateName`'s Display renders them in the marker's
+// `crates` field (see benchmark/src/run_marker.rs; must match ALL_CRATES).
+const FULL_CRATE_NAMES = [
+  "loole",
+  "flume",
+  "async-channel",
+  "tokio",
+  "crossbeam-channel",
+  "kanal (std-mutex)",
+];
+
+// Why this marker does not describe a full-matrix run, or null when it does.
+// Manual chart updates are refused for partial runs (mirrors the Rust-side
+// `chart_update::should_update_charts` PartialRun gate): rebuilding committed
+// charts from a subset would rewrite complete datasets with partial data.
+function markerCoverageProblem(marker) {
+  if (marker.metric !== "both") {
+    return `metric is "${marker.metric}", not "both"`;
+  }
+  const crates = String(marker.crates ?? "").split(",").map((c) => c.trim()).filter(Boolean);
+  const expected = FULL_CRATE_NAMES.map((c) => c.toLowerCase());
+  const actual = crates.map((c) => c.toLowerCase());
+  if (actual.length !== expected.length || !expected.every((c) => actual.includes(c))) {
+    return `crates are [${actual.join(",")}], not the full matrix`;
+  }
+  return null;
+}
+
 // --- Scanning ---------------------------------------------------------------
 
 // Reads <criterionDir>/<group>/<func>/new/estimates.json for benches of
@@ -240,6 +268,15 @@ function main() {
     );
     process.exit(1);
   }
+  const coverage = markerCoverageProblem(marker);
+  if (coverage) {
+    console.error(
+      `the latest size-${size} run was a partial run (${coverage}); ` +
+        "charts are only rebuilt from full-matrix runs. Re-run the full suite first:\n" +
+        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size}`
+    );
+    process.exit(1);
+  }
   const cells = collect(criterionDir, size, { minMtimeMs: marker.started_at });
   if (cells.length === 0) {
     console.error(
@@ -268,4 +305,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseId, cellValue, collect, readRunMarker, buildData, main };
+module.exports = { parseId, cellValue, collect, readRunMarker, markerCoverageProblem, buildData, main };

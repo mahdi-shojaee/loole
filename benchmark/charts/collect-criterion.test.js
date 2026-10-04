@@ -284,6 +284,45 @@ test("readRunMarker ignores the old payload-less marker name", () => {
   assert.equal(cc.readRunMarker(dir, 32), null);
 });
 
+// ---------------------------------------------------------------------------
+// markerCoverageProblem: manual chart updates must refuse partial runs
+// (mirrors chart_update::should_update_charts' PartialRun gate).
+// ---------------------------------------------------------------------------
+
+const FULL_CRATES_MARKER =
+  "loole,flume,async-channel,tokio,crossbeam-channel,kanal (std-mutex)";
+
+test("markerCoverageProblem flags metric-subset markers", () => {
+  const marker = { started_at: 1, metric: "latency", crates: FULL_CRATES_MARKER };
+  assert.ok(cc.markerCoverageProblem(marker), "latency-only marker must be flagged");
+});
+
+test("markerCoverageProblem flags crate-subset markers", () => {
+  const marker = { started_at: 1, metric: "both", crates: "loole" };
+  assert.ok(cc.markerCoverageProblem(marker), "single-crate marker must be flagged");
+  // parse_crates dedupes into canonical order on the Rust side, but the
+  // comparison here is a set check: order must not matter.
+  const rotated = {
+    started_at: 1,
+    metric: "both",
+    crates: "kanal (std-mutex),loole,flume,async-channel,tokio,crossbeam-channel",
+  };
+  assert.ok(!cc.markerCoverageProblem(rotated), "reordered full set must pass");
+});
+
+test("markerCoverageProblem flags markers without coverage fields", () => {
+  assert.ok(cc.markerCoverageProblem({ started_at: 1 }), "missing fields = partial");
+  assert.ok(
+    cc.markerCoverageProblem({ started_at: 1, metric: "both" }),
+    "missing crates = partial"
+  );
+});
+
+test("markerCoverageProblem accepts a full-matrix marker", () => {
+  const marker = { started_at: 1, metric: "both", crates: FULL_CRATES_MARKER };
+  assert.equal(cc.markerCoverageProblem(marker), null);
+});
+
 test("collect with minMtimeMs excludes estimates older than the run start", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   const write = (groupDir, funcDir, mean, whenMs) => {
