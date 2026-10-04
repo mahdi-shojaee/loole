@@ -157,6 +157,37 @@ fn cancel_parked_send_keeps_channel_correct() {
     assert!(rx.try_recv().is_err());
 }
 
+/// Cancelling a parked future must not advance the consumed-park watermark:
+/// the survivors' re-poll before any consumption must stay `Pending`. If a
+/// regression published removed ids to the watermark, the fast path would
+/// falsely confirm an older surviving send (watermark past its id) and a
+/// later close would destroy its message after `Ok` — a lost delivery.
+#[test]
+fn cancel_does_not_confirm_surviving_parked_sends() {
+    let (tx, rx) = bounded(0);
+    let mut cx = Context::from_waker(noop_waker_ref());
+
+    let mut f1 = tx.send_async(1);
+    let mut f2 = tx.send_async(2);
+    let mut f3 = tx.send_async(3);
+    assert!(Pin::new(&mut f1).poll(&mut cx).is_pending());
+    assert!(Pin::new(&mut f2).poll(&mut cx).is_pending());
+    assert!(Pin::new(&mut f3).poll(&mut cx).is_pending());
+
+    // Cancel the middle send, then re-poll the survivors BEFORE any
+    // consumption: the removal must not publish any id to the watermark.
+    drop(f2);
+    assert!(Pin::new(&mut f1).poll(&mut cx).is_pending());
+    assert!(Pin::new(&mut f3).poll(&mut cx).is_pending());
+
+    // FIFO consumption still resolves the survivors with their messages.
+    assert_eq!(rx.try_recv(), Ok(1));
+    assert_eq!(Pin::new(&mut f1).poll(&mut cx), Poll::Ready(Ok(())));
+    assert_eq!(rx.try_recv(), Ok(3));
+    assert_eq!(Pin::new(&mut f3).poll(&mut cx), Poll::Ready(Ok(())));
+    assert!(rx.try_recv().is_err());
+}
+
 /// `drain` consumes parked sends: it publishes their ids so the woken async
 /// senders resolve Ok, the drained messages are returned, and the parked
 /// messages moved into the channel remain receivable.
