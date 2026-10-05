@@ -417,22 +417,27 @@ impl<T> SharedState<T> {
         id
     }
 
-    fn close(&mut self) -> bool {
+    /// Closes the channel. Parked waiters are *collected*, not woken: waker
+    /// code is arbitrary user code (an inline-waking executor re-polls the
+    /// future right here) and must never run while the channel lock is
+    /// held — the caller wakes the returned signals after releasing it, the
+    /// same discipline `try_recv` and `wake_next_pending_recv` follow.
+    fn close(&mut self) -> (bool, Vec<Signal>) {
         let was_closed = self.closed;
         self.closed = true;
+        let mut wakes = Vec::new();
         for (_, e) in self.pending_recvs.iter() {
             match e {
-                PendingRecv::Hook(h) => h.signal.notify(),
-                PendingRecv::Waker { signal, .. } => signal.wake_by_ref(),
+                PendingRecv::Hook(h) => wakes.push(Signal::Sync(h.signal.clone())),
+                PendingRecv::Waker { signal, .. } => wakes.push(signal.clone()),
             }
         }
         for (_, send) in self.pending_sends.iter() {
-            match send {
-                PendingSend::Parked(_, s) => s.wake_by_ref(),
-                PendingSend::Gift(_) => {}
+            if let PendingSend::Parked(_, s) = send {
+                wakes.push(s.clone());
             }
         }
-        !was_closed
+        (!was_closed, wakes)
     }
 
     fn is_closed(&self) -> bool {
@@ -1087,7 +1092,10 @@ struct SenderInner<T> {
 // plus a `fetch_update`, and now borrows instead of cloning).
 impl<T> Drop for SenderInner<T> {
     fn drop(&mut self) {
-        self.core.lock().close();
+        let (_, wakes) = self.core.lock().close();
+        for w in &wakes {
+            w.wake_by_ref();
+        }
     }
 }
 
@@ -1347,7 +1355,13 @@ impl<T> Sender<T> {
     ///
     /// The remaining messages can still be received.
     pub fn close(&self) -> bool {
-        self.inner.core.lock().close()
+        // The lock (a temporary of this statement) is released before the
+        // collected waiters are woken: waker code may re-enter the channel.
+        let (was_open, wakes) = self.inner.core.lock().close();
+        for w in &wakes {
+            w.wake_by_ref();
+        }
+        was_open
     }
 
     /// Returns true if the channel is closed.
@@ -1390,7 +1404,10 @@ struct ReceiverInner<T> {
 // RMW on the hot async path.
 impl<T> Drop for ReceiverInner<T> {
     fn drop(&mut self) {
-        self.core.lock().close();
+        let (_, wakes) = self.core.lock().close();
+        for w in &wakes {
+            w.wake_by_ref();
+        }
     }
 }
 
@@ -1642,6 +1659,7 @@ impl<T> Receiver<T> {
         let n = guard
             .cap
             .map_or(0, |cap| cap.min(guard.pending_sends.len()));
+        let mut wakes = Vec::new();
         for _ in 0..n {
             if let Some((cid, send)) = guard.pending_sends.dequeue() {
                 match send {
@@ -1654,7 +1672,9 @@ impl<T> Receiver<T> {
                         // watermark ahead of the queue it vouches for.
                         self.inner.core.consumed_park.store(cid, Ordering::Release);
                         signal.mark_taken();
-                        signal.wake();
+                        // Collected, not woken: waker code is arbitrary
+                        // user code and must not run under the channel lock.
+                        wakes.push(signal);
                     }
                     PendingSend::Gift(m) => {
                         guard.queue.push_back(m);
@@ -1662,6 +1682,10 @@ impl<T> Receiver<T> {
                     }
                 }
             }
+        }
+        drop(guard);
+        for signal in wakes {
+            signal.wake();
         }
         Drain {
             queue,
@@ -1722,7 +1746,13 @@ impl<T> Receiver<T> {
     ///
     /// The remaining messages can still be received.
     pub fn close(&self) -> bool {
-        self.inner.core.lock().close()
+        // The lock (a temporary of this statement) is released before the
+        // collected waiters are woken: waker code may re-enter the channel.
+        let (was_open, wakes) = self.inner.core.lock().close();
+        for w in &wakes {
+            w.wake_by_ref();
+        }
+        was_open
     }
 
     /// Returns true if the channel is closed.
