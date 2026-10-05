@@ -287,6 +287,50 @@ fn recv_future_waker_is_refreshed_on_repoll() {
 }
 
 #[test]
+fn send_future_same_waker_repoll_keeps_registration() {
+    // Re-polling with the *same* waker takes `update_waker`'s `will_wake`
+    // early return: no re-clone, and the stored registration must stay
+    // intact — the later event still wakes exactly once.
+    let (tx, rx) = bounded(1);
+    tx.send(1).unwrap();
+
+    let (count, waker) = counting_waker();
+    let cx = &mut Context::from_waker(&waker);
+
+    let mut f = tx.send_async(2);
+    assert!(Pin::new(&mut f).poll(cx).is_pending());
+    // Same waker: the skip path must not drop the registration.
+    assert!(Pin::new(&mut f).poll(cx).is_pending());
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+
+    // Freeing space wakes the still-registered waker exactly once.
+    assert_eq!(rx.recv(), Ok(1));
+    sync_sleep(100);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(rx.recv(), Ok(2));
+}
+
+#[test]
+fn recv_future_same_waker_repoll_keeps_registration() {
+    // Recv-side twin: the `will_wake` skip on a same-waker re-poll must keep
+    // the registered waker — the later send wakes exactly once.
+    let (tx, rx) = bounded::<u8>(1);
+
+    let (count, waker) = counting_waker();
+    let cx = &mut Context::from_waker(&waker);
+
+    let mut f = rx.recv_async();
+    assert!(Pin::new(&mut f).poll(cx).is_pending());
+    assert!(Pin::new(&mut f).poll(cx).is_pending());
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+
+    tx.send(1).unwrap();
+    sync_sleep(100);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(Pin::new(&mut f).poll(cx), Poll::Ready(Ok(1)));
+}
+
+#[test]
 fn send_futures_resolve_in_fifo_order_after_disconnect() {
     let (tx, rx) = bounded(0);
 
