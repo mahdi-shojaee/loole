@@ -278,6 +278,63 @@ mod tests {
         assert_eq!(queue.remove(4), None);
     }
 
+    // --- Single-waiter inline fast path ------------------------------------
+    // The inline slot is the SPSC steady state; these pin its invariants
+    // directly (the e2e suite only exercises enqueue->dequeue/contains).
+
+    #[test]
+    fn remove_of_inline_entry_empties_it() {
+        let mut queue: Queue<i32> = Queue::new();
+        queue.enqueue(1, 10);
+        assert!(
+            queue.inline.is_some(),
+            "single entry lives in the inline slot"
+        );
+        assert_eq!(queue.remove(1), Some((1, 10)));
+        assert_eq!(queue.len(), 0);
+        assert!(queue.inline.is_none(), "inline slot must be vacated");
+        assert_eq!(queue.dequeue(), None);
+    }
+
+    #[test]
+    fn get_mut_updates_inline_entry_in_place() {
+        let mut queue: Queue<Vec<u8>> = Queue::new();
+        queue.enqueue(1, vec![1, 2]);
+        // `get_mut` on the inline slot must not disturb its position.
+        queue.get_mut(1).unwrap().push(3);
+        assert!(queue.inline.is_some());
+        assert_eq!(queue.dequeue(), Some((1, vec![1, 2, 3])));
+    }
+
+    #[test]
+    fn enqueue_front_restores_inline_and_preserves_order_when_occupied() {
+        // After a dequeue the inline slot is empty: enqueue_front returns the
+        // entry to the inline slot.
+        let mut queue: Queue<i32> = Queue::new();
+        queue.enqueue(1, 10);
+        assert_eq!(queue.dequeue(), Some((1, 10)));
+        queue.enqueue_front(1, 10);
+        assert!(
+            queue.inline.is_some(),
+            "put-back goes back to the inline slot"
+        );
+        assert_eq!(queue.dequeue(), Some((1, 10)));
+
+        // Occupied inline slot: enqueue_front must flush the old entry to the
+        // queue front first and place the new entry before it, so the
+        // just-put-back item is still dequeued first (FIFO order kept).
+        queue.enqueue(2, 20);
+        assert!(queue.inline.is_some());
+        queue.enqueue_front(1, 10);
+        assert!(
+            queue.inline.is_none(),
+            "occupied slot is flushed to the queue"
+        );
+        assert_eq!(queue.dequeue(), Some((1, 10)));
+        assert_eq!(queue.dequeue(), Some((2, 20)));
+        assert_eq!(queue.dequeue(), None);
+    }
+
     #[test]
     fn test_iter() {
         let mut queue = Queue::new();
