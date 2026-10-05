@@ -22,16 +22,30 @@
 set -u
 REPEATS=5; CRATES="loole flume"; OUTDIR="${OUTDIR:-}"; TASKSET="${TASKSET:-}"; PARALLEL=""; PARALLEL_GIVEN=0
 BENCH_ARGS=()
+usage() {
+  echo "usage: compare.sh --repeats N --crates \"a b\"|\"a,c d\" [--outdir D] [--parallel \"0,1 2,3\"] -- [bench args]" >&2
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repeats) REPEATS="$2"; shift 2;;
-    --crates) CRATES="$2"; shift 2;;
-    --outdir) OUTDIR="$2"; shift 2;;
-    --parallel) PARALLEL="$2"; PARALLEL_GIVEN=1; shift 2;;
+    --repeats|--crates|--outdir|--parallel)
+      # A missing value would otherwise die on a raw `set -u` unbound-variable
+      # error instead of pointing at the flag.
+      if [ $# -lt 2 ]; then echo "error: $1 needs a value" >&2; usage; exit 2; fi
+      case "$1" in
+        --repeats) REPEATS="$2";;
+        --crates) CRATES="$2";;
+        --outdir) OUTDIR="$2";;
+        --parallel) PARALLEL="$2"; PARALLEL_GIVEN=1;;
+      esac
+      shift 2;;
     --) shift; BENCH_ARGS=("$@"); break;;
-    *) echo "usage: compare.sh --repeats N --crates \"a b\"|\"a,c d\" [--outdir D] [--parallel \"0,1 2,3\"] -- [bench args]" >&2; exit 2;;
+    *) usage; exit 2;;
   esac
 done
+if ! [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: --repeats must be a positive integer, got '$REPEATS'" >&2
+  exit 2
+fi
 TS=$(date -u +%Y-%m-%d-%H-%M)
 # Absolute repo-rooted paths: the script may be invoked from any directory,
 # and per-worker env dirs must resolve identically for cargo, the bench
