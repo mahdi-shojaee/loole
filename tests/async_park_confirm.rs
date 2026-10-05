@@ -249,6 +249,26 @@ fn sink_supersede_parked_send() {
     assert!(rx.try_recv().is_err());
 }
 
+/// First multi-threaded runtime in the suite: the consumed-park confirm's
+/// `Release` store (receiver side) pairs with the woken sender's `Acquire`
+/// load on a different OS thread — the schedule the benchmark workload
+/// actually runs and every other test (current_thread) never crosses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn consumed_park_confirm_across_threads() {
+    let (tx, rx) = bounded(1);
+    tx.send(1).unwrap();
+
+    let send_task = tokio::spawn(async move { tx.send_async(2).await });
+    tokio::time::sleep(ms(50)).await; // let it park on the full queue
+
+    // Consume from this task: the woken sender resumes on another worker,
+    // so its lock-free confirm load crosses thread boundaries.
+    assert_eq!(rx.recv_async().await, Ok(1));
+    assert_eq!(send_task.await.unwrap(), Ok(()));
+    assert_eq!(rx.recv_async().await, Ok(2));
+    assert!(rx.try_recv().is_err());
+}
+
 /// Rendezvous async ping-pong: every message parks the sender and consumes
 /// the parked entry, advancing the watermark each time.
 #[tokio::test]
