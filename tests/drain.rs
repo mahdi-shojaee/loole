@@ -75,6 +75,50 @@ fn drain_wakes_pulled_pending_senders() {
 }
 
 #[test]
+fn drain_pulls_only_cap_parked_sends_when_more_are_pending() {
+    // With more parked senders than capacity, drain must pull exactly `cap`
+    // of them (the `min` in `cap.min(pending)`); the rest stay parked and
+    // are pulled one-by-one as later recvs free space. Detection is via
+    // `len` after drain: a full pull would leave 3 messages in a cap-2
+    // channel.
+    let (tx, rx) = bounded(2);
+    let tx1 = tx.clone();
+    let tx2 = tx.clone();
+    let tx3 = tx.clone();
+    scope(|scope| {
+        let h1 = scope.spawn(move || {
+            sync_sleep(100);
+            assert_eq!(tx1.send(3), Ok(()));
+        });
+        let h2 = scope.spawn(move || {
+            sync_sleep(100);
+            assert_eq!(tx2.send(4), Ok(()));
+        });
+        let h3 = scope.spawn(move || {
+            sync_sleep(100);
+            assert_eq!(tx3.send(5), Ok(()));
+        });
+        // Fill the queue [1, 2] so the cloned senders block.
+        assert_eq!(tx.send(1), Ok(()));
+        assert_eq!(tx.send(2), Ok(()));
+        sync_sleep(1000);
+        let drained = rx.drain().collect::<Vec<_>>();
+        assert_eq!(drained, [1, 2]);
+        // Exactly cap=2 of the 3 parked sends were pulled into the queue.
+        assert_eq!(rx.len(), 2);
+        // The third send stays parked; every recv frees a slot and pulls it
+        // in. Which sender parked first is a scheduling race, so the three
+        // parked messages arrive in arrival order: assert the multiset.
+        let mut pulled = [rx.recv().unwrap(), rx.recv().unwrap(), rx.recv().unwrap()];
+        pulled.sort();
+        assert_eq!(pulled, [3, 4, 5]);
+        h1.join().unwrap();
+        h2.join().unwrap();
+        h3.join().unwrap();
+    });
+}
+
+#[test]
 fn drain_is_exact_size_iterator() {
     // `Drain` implements `ExactSizeIterator`: `len` and `size_hint` track the
     // number of remaining items.
