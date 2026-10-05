@@ -127,10 +127,6 @@ pub fn collect(invocation: &str, payload: &str, extra_env: &[(&str, String)]) ->
             set.into_iter().collect()
         }
     };
-    let affinity = read_first_line("/proc/self/status")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
     let affinity = std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|b| {
@@ -139,7 +135,7 @@ pub fn collect(invocation: &str, payload: &str, extra_env: &[(&str, String)]) ->
                 .and_then(|l| l.split_once(':'))
                 .map(|(_, v)| v.trim().to_string())
         })
-        .unwrap_or(affinity);
+        .unwrap_or_else(|| "unknown".to_string());
     let loadavg = read_first_line("/proc/loadavg");
     let mem_total_kb = std::fs::read_to_string("/proc/meminfo")
         .ok()
@@ -174,10 +170,14 @@ pub fn collect(invocation: &str, payload: &str, extra_env: &[(&str, String)]) ->
 }
 
 /// Collision-free sidecar filename for one wrapper invocation:
-/// `machine-<message_size>-<payload>-<unix_ms>.json`, so repeated runs over
-/// sizes/payloads never overwrite each other's audit trail.
+/// `machine-<message_size>-<payload>-<unix_ms>-<pid>.json`, so repeated runs
+/// over sizes/payloads — and even two same-millisecond invocations — never
+/// overwrite each other's audit trail.
 pub fn machine_filename(message_size: usize, payload: &str, unix_ms: &str) -> String {
-    format!("machine-{message_size}-{payload}-{unix_ms}.json")
+    format!(
+        "machine-{message_size}-{payload}-{unix_ms}-{}.json",
+        std::process::id()
+    )
 }
 
 /// Writes the descriptor into `dir` (created if missing) under `filename`
@@ -217,7 +217,15 @@ pub fn write_machine_json_at(
         env
     );
     let path = dir.join(filename);
-    std::fs::write(&path, body)?;
+    // Temp-then-rename so an interrupted write can never leave a truncated
+    // descriptor in the audit trail — readers see either the old file or
+    // the complete new one, never a half-written one.
+    let tmp = path.with_extension("json.tmp");
+    if let Err(err) = std::fs::write(&tmp, body) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    std::fs::rename(&tmp, &path)?;
     Ok(path)
 }
 
@@ -264,9 +272,12 @@ mod tests {
 
     #[test]
     fn machine_filename_is_collision_free_and_write_at_uses_it() {
+        // The pid makes the name unique even for two same-millisecond
+        // invocations of the same size/payload (e.g. a smoke run racing a
+        // real run).
         assert_eq!(
             machine_filename(256, "alloc", "123"),
-            "machine-256-alloc-123.json"
+            format!("machine-256-alloc-123-{}.json", std::process::id())
         );
         let dir = std::env::temp_dir().join(format!(
             "loole-machine-at-test-{}",
@@ -279,6 +290,12 @@ mod tests {
         let path = write_machine_json_at(&dir, &name, &d).unwrap();
         assert_eq!(path, dir.join(&name));
         assert!(path.is_file());
+        // Atomic write: no temp file left behind.
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "only the descriptor file may remain after the write"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

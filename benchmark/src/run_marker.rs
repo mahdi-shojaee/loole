@@ -80,7 +80,16 @@ pub fn record_run_start_at(criterion_dir: &Path, cfg: &Config) -> io::Result<Pat
         crates = crates,
         parallelism = parallelism,
     );
-    fs::write(&path, payload)?;
+    // Temp-then-rename so an interrupted write can never leave a truncated
+    // marker (which would lock the converter out of the run's data with a
+    // hard parse error) — readers see the old or the new marker, never a
+    // half-written one.
+    let tmp = path.with_extension("json.tmp");
+    if let Err(err) = fs::write(&tmp, payload) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    fs::rename(&tmp, &path)?;
     Ok(path)
 }
 
@@ -125,6 +134,9 @@ mod tests {
         // Constant size: exactly one marker, and it parses as one line of JSON.
         assert_eq!(body.lines().count(), 1);
         assert!(body.starts_with('{'));
+        // Atomic write: no temp file left behind.
+        let runs: Vec<_> = fs::read_dir(dir.join("runs")).unwrap().collect();
+        assert_eq!(runs.len(), 1, "only the marker file may remain: {runs:?}");
     }
 
     #[test]

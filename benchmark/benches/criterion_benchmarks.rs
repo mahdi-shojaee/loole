@@ -96,7 +96,11 @@ fn wrapper_main() -> ! {
                     .map(|(_, v)| v.clone())
                     .or_else(|| std::env::var(name).ok())
             }) {
-                write_machine_sidecar(&cfg, &env_pairs);
+                // Meta invocations (--list/--help) measure nothing; they must
+                // not add a sidecar to the audit trail either.
+                if !benchmark::chart_update::is_meta_run(&passthrough) {
+                    write_machine_sidecar(&cfg, &env_pairs);
+                }
                 if cfg.isolate_crates && cfg.crates.len() > 1 {
                     // Record the run marker once, for the full matrix,
                     // BEFORE the first child: children must not write their
