@@ -42,7 +42,7 @@ use tokio::runtime::Runtime;
 const SAMPLE_SIZE: usize = 10;
 
 /// In-code time budgets (criterion's own defaults are 3s/5s per cell, which
-/// makes a full ~570-cell run far too slow). CLI flags override these.
+/// makes a full ~450-cell run far too slow). CLI flags override these.
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_millis(1500);
 

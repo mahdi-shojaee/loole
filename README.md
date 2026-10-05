@@ -69,7 +69,7 @@ loole = "0.5.0"
 Benchmarks measure two metrics:
 
 * **Throughput** — the number of messages received per second (higher is better).
-* **Latency** — the round-trip time for a message to travel from a sender to a receiver and back, in nanoseconds per message (lower is better), measured with a single sender/receiver pair exchanging messages back and forth.
+* **Latency** — the round-trip time for a message to travel from a sender to a receiver and back, in nanoseconds per round trip (lower is better), measured with a single sender/receiver pair exchanging messages back and forth.
 
 Measurements are driven by [Criterion.rs](https://github.com/bheisler/criterion.rs): warm-up, sampling, outlier detection, confidence intervals, and regression reports built in. For how to run the suite, configure workloads, and regenerate the charts below, see [BENCHMARK.md](BENCHMARK.md).
 
@@ -107,7 +107,7 @@ The number of messages received per second (higher is better).
 
 ### Latency
 
-Latency is the per-message round-trip time in nanoseconds (lower is better) for a single sender/receiver pair exchanging messages back and forth across two channels (one forward, one back).
+Latency is the round-trip time in nanoseconds (lower is better) for a single sender/receiver pair exchanging messages back and forth across two channels (one forward, one back).
 
 #### SPSC
 

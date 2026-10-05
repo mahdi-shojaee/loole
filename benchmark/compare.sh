@@ -3,7 +3,9 @@
 # processes, first-crate alternates per repeat (cancels cold-start order tax).
 # Usage: benchmark/compare.sh --repeats 5 --crates "loole flume" -- [bench args]
 #        benchmark/compare.sh --crates "loole,kanal (std-mutex)" -- [bench args]
-#   Optional env: TASKSET="0-7" prefixes runs with taskset -c; OUTDIR override.
+#   Optional env: TASKSET="0-7" prefixes runs with taskset -c; OUTDIR override;
+#   BENCH_CELL_FILTER (default "spsc") selects which cells the graded protocol
+#   snapshots — a substring of the cell ID (e.g. "spsc-s1r1", "b100").
 #   --crates accepts a space-separated list ("loole flume") or a comma-separated
 #   one ("loole,kanal (std-mutex)") — names containing spaces must use commas,
 #   like the bench's own parse_crates.

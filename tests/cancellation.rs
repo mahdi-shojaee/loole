@@ -190,8 +190,9 @@ fn drop_race_with_receiving_never_drops_or_duplicats_message() {
     });
 
     // All drops have happened: the scope joined every canceller thread, and
-    // each delivered message is dropped exactly once by the receiver once the
-    // `received` vec goes out of scope below. Correct accounting:
+    // the receiver pushes only the inner u64 (the `Message` wrapper is
+    // dropped at receive time, inside the loop above), so `drops` is final
+    // here. Correct accounting:
     //   total drops = (cancelled by droppers) + (delivered, dropped by receiver)
     // => cancelled = drops - delivered  and  cancelled + delivered == sent.
     let drops = DROPS.load(Ordering::SeqCst);

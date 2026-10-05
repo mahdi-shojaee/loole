@@ -73,7 +73,7 @@ Suite options (each is also settable via its environment variable):
 | `--worker-threads` | | `BENCH_WORKER_THREADS` | `0` | tokio worker count (0 = one per CPU) |
 | `--isolate-crates` | | `BENCH_ISOLATE_CRATES` | off | one process per crate |
 | `--no-warmup-cell` | | `BENCH_NO_WARMUP_CELL` | off | skip pre-timing warmup |
-| `--payload` | | `BENCH_PAYLOAD` | `alloc` | `alloc` (fresh Vec per send, allocator-inclusive), `shared` (one Arc per sender: channel-isolation control, not a workload model), or `touched` (distinct content per send, realistic cache footprint) |
+| `--payload` | | `BENCH_PAYLOAD` | `alloc` | `alloc` (fresh Vec per send, allocator-inclusive), `shared` (one Arc per sender: channel-isolation control, not a workload model), or `touched` (a distinct fresh Vec per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic). Throughput cells only; the latency suite always runs `alloc`. |
 
 All native criterion options pass straight through:
 
@@ -86,7 +86,7 @@ All native criterion options pass straight through:
 | `--list` | | List benchmarks without running them |
 | `<filter>` | | Positional substring filter, e.g. `spsc` or `spsc/sync-sync` |
 
-The in-code sampling defaults are quick so a full ~570-cell run stays
+The in-code sampling defaults are quick so a full ~450-cell run stays
 practical; any sampling flag set on the command line overrides them. Deepen
 sampling for numbers you intend to publish.
 
@@ -194,7 +194,7 @@ the harness now neutralizes each by default or by flag:
 2. **Placement lottery (P/E cores, frequency).** Unpinned runs roam across
     heterogeneous cores and power states (observed 0.55–3.5M for identical
     code); any fixed 2-core pin is stable. Record the machine descriptor
-    (`machine-<size>-<payload>-<unix_ms>.json` in `target/criterion/runs/`,
+    (`machine-<size>-<payload>-<unix_ms>-<pid>.json` in `target/criterion/runs/`,
     written per run) and prefer pinned runs for decisions:
    `TASKSET="0-7" benchmark/compare.sh ...`. Fix the runtime size with
    `--worker-threads` when comparing scheduler-sensitive cells.
@@ -246,7 +246,7 @@ criterion directory, and every child is a partial run).
 
 ## Machine descriptor
 
-Every invocation writes `target/criterion/runs/machine-<size>-<payload>-<unix_ms>.json`
+Every invocation writes `target/criterion/runs/machine-<size>-<payload>-<unix_ms>-<pid>.json`
 (governor, per-CPU frequencies, topology, process affinity, load, memory, git
 SHA + dirty flag, full invocation and `BENCH_*` env). Attach it to any
 published number; check it first whenever a ranking flips between runs.
