@@ -282,13 +282,6 @@ fn parse_nonnegative(env: &str, value: &str) -> Result<u64, String> {
         .map_err(|_| format!("{env}: '{value}' is not a non-negative integer"))
 }
 
-/// Resolve the worker-thread count override: missing or unparseable means 0
-/// (runtime default, one worker per CPU). Never errors by design — a typo
-/// must not break a benchmark run; it just keeps the default.
-pub fn parse_worker_threads(value: Option<&str>) -> usize {
-    value.and_then(|v| v.trim().parse().ok()).unwrap_or(0)
-}
-
 /// Canonicalizes one parameter value, assigning it to `cfg`.
 fn apply_value(cfg: &mut Config, env: &'static str, value: &str) -> Result<(), String> {
     match env {
@@ -877,15 +870,14 @@ mod tests {
 
     #[test]
     fn parse_worker_threads_missing_or_bad_means_default() {
-        assert_eq!(parse_worker_threads(None), 0);
-        assert_eq!(parse_worker_threads(Some("")), 0);
-        assert_eq!(parse_worker_threads(Some("abc")), 0);
-    }
-
-    #[test]
-    fn parse_worker_threads_reads_counts() {
-        assert_eq!(parse_worker_threads(Some("0")), 0);
-        assert_eq!(parse_worker_threads(Some("2")), 2);
-        assert_eq!(parse_worker_threads(Some("24")), 24);
+        // The bench child used to re-parse BENCH_WORKER_THREADS with this
+        // forgiving parser; the config pipeline (parse_nonnegative via
+        // apply_value) is now the single source and rejects bad values at
+        // wrapper validation time, so the duplicate parser is gone and this
+        // test pins the field's plumbing instead.
+        let cfg = from_env_pairs(&[("BENCH_WORKER_THREADS", "4")]).unwrap();
+        assert_eq!(cfg.worker_threads, 4);
+        assert!(from_env_pairs(&[("BENCH_WORKER_THREADS", "abc")]).is_err());
+        assert_eq!(Config::default().worker_threads, 0);
     }
 }

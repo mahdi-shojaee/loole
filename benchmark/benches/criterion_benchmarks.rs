@@ -46,10 +46,13 @@ const SAMPLE_SIZE: usize = 10;
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_millis(1500);
 
-fn rt() -> &'static Runtime {
+/// Shared tokio runtime for the benchmark cells. `workers == 0` means the
+/// runtime default (one worker per CPU). The count comes from the validated
+/// config — the same `BENCH_WORKER_THREADS` the wrapper checked — not from a
+/// second, silently-forgiving env re-parse.
+fn rt(workers: usize) -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     RT.get_or_init(|| {
-        let workers = benchmark::config::parse_worker_threads(std::env::var("BENCH_WORKER_THREADS").ok().as_deref());
         if workers == 0 {
             Runtime::new().unwrap()
         } else {
@@ -316,7 +319,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
     }
     if !cfg.no_warmup_cell && !benchmark::chart_update::is_meta_run(&args) {
         for &krate in &cfg.crates {
-            benchmark::warmup::run_once(rt(), krate, 1_000);
+            benchmark::warmup::run_once(rt(cfg.worker_threads), krate, 1_000);
         }
     }
     let ran_throughput = cfg.metric.includes_throughput();
@@ -399,7 +402,7 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
                         b.iter_batched(
                             || {
                                 setup_throughput(
-                                    rt(),
+                                    rt(cfg.worker_threads),
                                     krate,
                                     combo,
                                     senders,
@@ -413,7 +416,7 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
                             },
                             // The transfer happens (and completes) on join:
                             // the exact `t0`-after-spawn semantics of the old runner.
-                            |run| rt().block_on(run.join_all()),
+                            |run| rt(cfg.worker_threads).block_on(run.join_all()),
                             BatchSize::PerIteration,
                         );
                     });
@@ -444,7 +447,7 @@ fn latency_group(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) 
                     b.iter_batched(
                         || {
                             setup_latency(
-                                rt(),
+                                rt(cfg.worker_threads),
                                 krate,
                                 combo,
                                 cap,
@@ -453,7 +456,7 @@ fn latency_group(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) 
                             )
                             .expect("cell checked by supports_latency")
                         },
-                        |mut probe| probe.run(rt(), cfg.latency_rounds),
+                        |mut probe| probe.run(rt(cfg.worker_threads), cfg.latency_rounds),
                         BatchSize::PerIteration,
                     );
                 });
