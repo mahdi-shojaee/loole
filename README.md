@@ -93,7 +93,7 @@ The number of messages received per second (higher is better).
 
 ![MPMC: sync-sync](benchmark/charts/images/mpmc-sync-sync-throughput-256.svg)
 ![MPMC: async-async](benchmark/charts/images/mpmc-async-async-throughput-256.svg)
-![MPMC: async-sync](benchmark/charts/images/mpmc-async-async-throughput-256.svg)
+![MPMC: async-sync](benchmark/charts/images/mpmc-async-sync-throughput-256.svg)
 ![MPMC: sync-async](benchmark/charts/images/mpmc-sync-async-throughput-256.svg)
 ![MPMC: unbounded](benchmark/charts/images/mpmc-unbounded-throughput-256.svg)
 

@@ -65,7 +65,7 @@ Suite options (each is also settable via its environment variable):
 | `--max-senders` | | `BENCH_SENDERS` | `1000` | Sender count for MPSC (receivers = 1) and MPMC |
 | `--max-receivers` | | `BENCH_RECEIVERS` | `10` | Receiver count for MPMC |
 | `--metric` | | `BENCH_METRIC` | `both` | `throughput`, `latency`, or `both` |
-| `--crates` | | `BENCH_CRATES` | `all` | Space/comma-separated crates (e.g. `"loole flume"`) |
+| `--crates` | | `BENCH_CRATES` | `all` | Space/comma-separated crates (e.g. `"loole flume"`); order is execution order (e.g. `--crates "flume loole"` measures flume first) |
 | `--latency-rounds` | | `BENCH_LATENCY_ROUNDS` | `100000` | Timed ping-pong round trips per iteration |
 | `--latency-warmup` | | `BENCH_LATENCY_WARMUP` | `1000` | Untimed warm-up round trips per iteration |
 | `--cooldown-secs` | | `BENCH_COOLDOWN_SECS` | `0` | Idle seconds between benchmark groups so the machine cools down (0 disables) |
@@ -189,15 +189,18 @@ the harness now neutralizes each by default or by flag:
    pays cold-start costs (frequency ramp, worker wake, cache warmup) while
    the second crate coasts: second-runner wins ~9/10 mixed comparisons
    regardless of crate. Use `--isolate-crates` (one process per crate, each
-   pays cold equally) or alternate `--crates` order across repeats with
-   `benchmark/compare.sh` (it alternates automatically).
+   pays cold equally) or alternate `--crates` order across repeats
+   (`--crates "loole flume"` then `--crates "flume loole"` — order is
+   execution order), ideally as single-crate runs (`--crates loole`, then
+   `--crates flume`), so each crate measures first equally often.
 2. **Placement lottery (P/E cores, frequency).** Unpinned runs roam across
     heterogeneous cores and power states (observed 0.55–3.5M for identical
     code); any fixed 2-core pin is stable. Record the machine descriptor
     (`machine-<size>-<payload>-<unix_ms>-<pid>.json` in `target/criterion/runs/`,
     written per run) and prefer pinned runs for decisions:
-   `TASKSET="0-7" benchmark/compare.sh ...`. Fix the runtime size with
-   `--worker-threads` when comparing scheduler-sensitive cells.
+   `taskset -c 0-7 cargo bench -p benchmark --bench criterion_benchmarks -- …`.
+   Fix the runtime size with `--worker-threads` when comparing
+   scheduler-sensitive cells.
 3. **Payload churn.** At 16KB, fresh-`Vec`-per-send measures the allocator
    more than the channel. Two lenses complement the default `alloc` history
    number: `--payload shared` clones one preallocated `Arc` per send — a
@@ -206,43 +209,30 @@ the harness now neutralizes each by default or by flag:
    counter pattern, modeling real payloads that touch all their bytes.
    Chart JSONs render `alloc` mode only.
 
-## Graded 5-repeat recipe
+## Repeat recipe
+
+For a verdict, repeat the comparison as single-crate runs and alternate who
+measures first (`--crates` order is execution order, so swap it per repeat):
 
 ```bash
-benchmark/compare.sh --repeats 5 --crates "loole flume" -- \
-  -n 100000 -m 16384 --metric throughput spsc-s1r1/async-async/b100
+# Odd repeats: loole first; even repeats: flume first.
+for i in 1 2 3 4 5; do
+  if [ $((i % 2)) -eq 1 ]; then first=loole; second=flume;
+  else first=flume; second=loole; fi
+  for crate in $first $second; do
+    taskset -c 0-7 cargo bench -p benchmark --bench criterion_benchmarks -- \
+      --crates "$crate" -n 100000 -m 16384 --metric throughput \
+      spsc-s1r1/async-async/b100
+  done
+done
 ```
 
-`compare.sh` alternates which crate measures first per repeat, snapshots
-each repeat under `target/bench-runs/<timestamp>/`, and prints a winner
-table plus win tally (`wins: loole=X flume=Y`). A result counts when loole
-wins 4 of 5. For placement-stable numbers add `TASKSET="0-7"`; for deeper
-confidence intervals append `--sample-size 40 --measurement-time 10`.
-
-## Parallel smoke screening
-
-For fast multi-crate screening, `compare.sh` can pin each crate to its own
-CPU pair and run disjoint pairs concurrently:
-
-```bash
-benchmark/compare.sh --repeats 2 --crates "loole flume kanal" \
-  --parallel "0,1 2,3 4,5" -- -n 20000 -m 16384 --metric throughput spsc
-```
-
-Pairs map positionally to `--crates` (crate *i* always runs on pair
-*i mod nslots*, every repeat); with more crates than pairs the remainder run
-in a second wave. Each crate builds and measures under its own
-`target/parallel-build/<crate>/` directory, so concurrent runs never share
-cargo or criterion state (first use rebuilds per crate). `--parallel`
-conflicts with `TASKSET` (pick one pinning method).
-
-Pair guidance: any fixed set of homogeneous cores works (separate physical
-cores preferred; P-cores recommended for absolute numbers). Results are
-screening only — crates share power, thermal headroom, and memory bandwidth
-while running together, so never use them for verdicts; the summary prints
-an explicit warning. Verdicts require sequential pinned repeats (see above).
-Parallel runs never touch charts (each worker measures into its own
-criterion directory, and every child is a partial run).
+A result counts when loole wins 4 of 5. For deeper confidence intervals
+append `--sample-size 40 --measurement-time 10`. Each run writes a machine
+descriptor (`target/criterion/runs/machine-*.json`); check it first whenever
+a ranking flips between runs. Never measure contenders concurrently —
+crates share power, thermal headroom, and memory bandwidth while running
+together, so concurrent numbers are screening only, never verdicts.
 
 ## Machine descriptor
 

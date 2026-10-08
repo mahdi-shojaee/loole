@@ -307,8 +307,9 @@ fn apply_value(cfg: &mut Config, env: &'static str, value: &str) -> Result<(), S
 }
 
 /// Parses a space/comma-separated crate list into a deduplicated slice in
-/// canonical order. The special value "all" (or an empty list) selects every
-/// crate. Unknown names are hard errors.
+/// user-supplied order (execution order). The special value "all" (or an
+/// empty list) selects every crate in canonical order. Unknown names are
+/// hard errors.
 ///
 /// Note: the full name "kanal (std-mutex)" contains a space, so it is only
 /// recognized as a whole comma-separated part; prefer the alias "kanal".
@@ -342,12 +343,10 @@ pub fn parse_crates(s: &str) -> Result<Vec<CrateName>, String> {
     if selected.is_empty() {
         return Ok(ALL_CRATES.to_vec());
     }
-    // Reorder into canonical order so the JSON header is deterministic.
-    Ok(ALL_CRATES
-        .iter()
-        .copied()
-        .filter(|c| selected.contains(c))
-        .collect())
+    // Preserve user-supplied order: it controls execution order. Chart
+    // columns stay canonical regardless (see CRATE_ORDER in
+    // charts/collect-criterion.js), and coverage gates compare as sets.
+    Ok(selected)
 }
 
 /// Splits process args into (env assignments for the re-exec'd child, args to
@@ -428,7 +427,8 @@ fn validated(param: &Param, value: &str) -> Result<(&'static str, String), Strin
     // Run the same parsing the child would, so bad values fail in the wrapper.
     apply_value(&mut Config::default(), param.env, value)?;
     if param.env == "BENCH_CRATES" {
-        // Canonical comma-separated form (and deduped/canonical order).
+        // Canonical comma-separated form (deduped, user order preserved so
+        // the re-exec'd child measures in the requested order).
         let names = parse_crates(value)?
             .iter()
             .map(|c| c.to_string())
@@ -588,16 +588,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_crates_reorders_into_canonical_order() {
+    fn parse_crates_preserves_input_order() {
         let got = parse_crates("crossbeam-channel tokio flume").unwrap();
         assert_eq!(
             got,
             vec![
-                CrateName::Flume,
+                CrateName::CrossbeamChannel,
                 CrateName::Tokio,
-                CrateName::CrossbeamChannel
+                CrateName::Flume,
             ]
         );
+        // Reversed input runs reversed.
+        let got = parse_crates("flume loole").unwrap();
+        assert_eq!(got, vec![CrateName::Flume, CrateName::Loole]);
     }
 
     #[test]
@@ -678,7 +681,7 @@ mod tests {
     #[test]
     fn crates_env_value_is_canonical_comma_list() {
         let (env, _) = split_args(&s(&["--crates", "tokio loole,loole"])).unwrap();
-        assert_eq!(env, vec![("BENCH_CRATES", "loole,tokio".to_string())]);
+        assert_eq!(env, vec![("BENCH_CRATES", "tokio,loole".to_string())]);
         // kanal alias resolves to the canonical display name
         let (env, _) = split_args(&s(&["--crates", "kanal"])).unwrap();
         assert_eq!(env, vec![("BENCH_CRATES", "kanal (std-mutex)".to_string())]);
@@ -760,6 +763,18 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.message_size, 32);
         assert_eq!(cfg.crates, vec![CrateName::Tokio]);
+    }
+
+    #[test]
+    fn crates_input_order_controls_execution_order() {
+        // `--crates "flume loole"` must measure flume first; the re-exec
+        // env round-trip has to preserve that order.
+        let (env, _) = split_args(&s(&["--crates", "flume loole"])).unwrap();
+        let cfg = Config::from_lookup(|name| {
+            env.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())
+        })
+        .unwrap();
+        assert_eq!(cfg.crates, vec![CrateName::Flume, CrateName::Loole]);
     }
 
     #[test]

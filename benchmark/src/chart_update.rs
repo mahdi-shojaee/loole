@@ -112,12 +112,18 @@ pub fn should_update_charts(
     }
     if !cfg.metric.includes_throughput()
         || !cfg.metric.includes_latency()
-        || cfg.crates != ALL_CRATES
+        || !is_full_crate_set(&cfg.crates)
         || has_positional_filter(passthrough)
     {
         return Err(SkipReason::PartialRun);
     }
     Ok(())
+}
+
+/// True when `crates` holds exactly the full matrix, regardless of order
+/// (`--crates` order controls execution order, not coverage).
+fn is_full_crate_set(crates: &[crate::benchmark::CrateName]) -> bool {
+    crates.len() == ALL_CRATES.len() && ALL_CRATES.iter().all(|c| crates.contains(c))
 }
 
 #[cfg(test)]
@@ -224,6 +230,17 @@ mod tests {
             should_update_charts(&cfg, &[], true),
             Err(SkipReason::PartialRun)
         );
+    }
+
+    #[test]
+    fn reordered_full_crate_set_still_updates_charts() {
+        let mut reordered = ALL_CRATES.to_vec();
+        reordered.reverse();
+        let cfg = Config {
+            crates: reordered,
+            ..Config::default()
+        };
+        assert_eq!(should_update_charts(&cfg, &[], true), Ok(()));
     }
 
     #[test]

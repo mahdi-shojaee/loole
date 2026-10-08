@@ -300,8 +300,8 @@ test("markerCoverageProblem flags metric-subset markers", () => {
 test("markerCoverageProblem flags crate-subset markers", () => {
   const marker = { started_at: 1, metric: "both", crates: "loole" };
   assert.ok(cc.markerCoverageProblem(marker), "single-crate marker must be flagged");
-  // parse_crates dedupes into canonical order on the Rust side, but the
-  // comparison here is a set check: order must not matter.
+  // parse_crates dedupes on the Rust side (order = execution order), but
+  // the comparison here is a set check: order must not matter.
   const rotated = {
     started_at: 1,
     metric: "both",

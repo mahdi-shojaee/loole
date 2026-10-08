@@ -194,7 +194,8 @@ fn print_custom_help() {
     eprintln!("        metric: throughput | latency | both (default: both)");
     eprintln!(
         "        crates: space/comma-separated; default: all \
-         (loole, flume, async-channel, tokio, kanal, crossbeam-channel)"
+         (loole, flume, async-channel, tokio, kanal, crossbeam-channel); \
+         order is execution order"
     );
     eprintln!();
 }
