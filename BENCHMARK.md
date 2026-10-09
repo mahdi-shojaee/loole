@@ -200,7 +200,13 @@ the harness now neutralizes each by default or by flag:
     written per run) and prefer pinned runs for decisions:
    `taskset -c 0-7 cargo bench -p benchmark --bench criterion_benchmarks -- …`.
    Fix the runtime size with `--worker-threads` when comparing
-   scheduler-sensitive cells.
+   scheduler-sensitive cells. All runs in a comparison must also share one
+   CPU governor — `powersave` idles cores near 800 MHz while `performance`
+   holds them near max, so the same binary can read ~0.55M msgs/s in one
+   state and ~3.5M in the other. Prefer `performance` for verdicts
+   (`sudo cpupower frequency-set -g performance`, restore with `-g powersave`
+   afterwards); the sidecar records the governor per run, so a mismatch is
+   checkable after the fact.
 3. **Payload churn.** At 16KB, fresh-`Vec`-per-send measures the allocator
    more than the channel. Two lenses complement the default `alloc` history
    number: `--payload shared` clones one preallocated `Arc` per send — a
@@ -212,9 +218,13 @@ the harness now neutralizes each by default or by flag:
 ## Repeat recipe
 
 For a verdict, repeat the comparison as single-crate runs and alternate who
-measures first (`--crates` order is execution order, so swap it per repeat):
+measures first (`--crates` order is execution order, so swap it per repeat).
+Use one CPU governor for the whole comparison — `performance` preferred:
 
 ```bash
+sudo cpupower frequency-set -g performance
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor  # confirm
+
 # Odd repeats: loole first; even repeats: flume first.
 for i in 1 2 3 4 5; do
   if [ $((i % 2)) -eq 1 ]; then first=loole; second=flume;
@@ -225,14 +235,21 @@ for i in 1 2 3 4 5; do
       spsc-s1r1/async-async/b100
   done
 done
+
+sudo cpupower frequency-set -g powersave  # restore
 ```
 
 A result counts when loole wins 4 of 5. For deeper confidence intervals
 append `--sample-size 40 --measurement-time 10`. Each run writes a machine
-descriptor (`target/criterion/runs/machine-*.json`); check it first whenever
-a ranking flips between runs. Never measure contenders concurrently —
-crates share power, thermal headroom, and memory bandwidth while running
-together, so concurrent numbers are screening only, never verdicts.
+descriptor (`target/criterion/runs/machine-*.json`); check governor,
+affinity, and frequencies first whenever a ranking flips between runs.
+Never compare across governors — frequency distorts cells unevenly (a
+wakeup-bound rendezvous cell scales differently with clocks than an
+allocator-bound unbounded cell), so no scaling factor can rescue mixed
+numbers; re-run under one governor instead. Never measure contenders
+concurrently — crates share power, thermal headroom, and memory bandwidth
+while running together, so concurrent numbers are screening only, never
+verdicts.
 
 ## Machine descriptor
 
