@@ -101,6 +101,8 @@ const CRATES = ["loole", "flume", "async-channel", "tokio", "kanal-std-mutex", "
 
 // All cells of the historical full run: topologies like the committed JSONs
 // (mpsc 1000/1, mpmc 1000/10, spsc 1/1), all caps incl. unbounded, all crates.
+// Mirrors the Rust support matrix (benchmark/src/benchmark.rs): tokio has no
+// MPMC cells (receivers > 1 unsupported), so mpmc omits tokio entirely.
 function fullCellSet() {
   const cells = [];
   const topoFor = { spsc: { name: "spsc", senders: 1, receivers: 1 }, mpsc: { name: "mpsc", senders: 1000, receivers: 1 }, mpmc: { name: "mpmc", senders: 1000, receivers: 10 } };
@@ -110,6 +112,7 @@ function fullCellSet() {
       for (const combo of COMBOS) {
         for (const capN of [...CAPS, null]) {
           for (const crate of CRATES) {
+            if (topology.name === "mpmc" && crate === "tokio") continue;
             cells.push({
               metric,
               topology,
