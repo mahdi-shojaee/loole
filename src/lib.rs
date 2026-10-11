@@ -697,42 +697,51 @@ impl<'a, T> SendFuture<'a, T> {
 /// A sink that allows sending values into a channel.
 ///
 /// Can be created via [`Sender::sink`] or [`Sender::into_sink`].
-pub struct SendSink<'a, T>(SendFuture<'a, T>);
+///
+/// Closing the sink releases only its own sender handle: concurrent sinks
+/// sharing the channel (e.g. via cloned senders) keep working after one of
+/// them closes. If the closed sink holds the last sender handle, dropping it
+/// closes the channel naturally.
+pub struct SendSink<'a, T>(Option<SendFuture<'a, T>>);
 
 impl<'a, T> SendSink<'a, T> {
+    fn inner(&self) -> &SendFuture<'a, T> {
+        self.0.as_ref().expect("SendSink used after close")
+    }
+
     /// Returns a clone of a sending half of the channel of this sink.
     pub fn sender(&self) -> &Sender<T> {
-        &self.0.sender
+        &self.inner().sender
     }
 
     /// See [`Sender::is_closed`].
     pub fn is_closed(&self) -> bool {
-        self.0.sender.is_closed()
+        self.inner().sender.is_closed()
     }
 
     /// See [`Sender::is_empty`].
     pub fn is_empty(&self) -> bool {
-        self.0.sender.is_empty()
+        self.inner().sender.is_empty()
     }
 
     /// See [`Sender::is_full`].
     pub fn is_full(&self) -> bool {
-        self.0.sender.is_full()
+        self.inner().sender.is_full()
     }
 
     /// See [`Sender::len`].
     pub fn len(&self) -> usize {
-        self.0.sender.len()
+        self.inner().sender.len()
     }
 
     /// See [`Sender::capacity`].
     pub fn capacity(&self) -> Option<usize> {
-        self.0.sender.capacity()
+        self.inner().sender.capacity()
     }
 
     /// Returns whether the SendSinks are belong to the same channel.
     pub fn same_channel(&self, other: &SendSink<'_, T>) -> bool {
-        self.0.sender.same_channel(&other.0.sender)
+        self.inner().sender.same_channel(&other.inner().sender)
     }
 }
 
@@ -745,48 +754,66 @@ impl<T> Debug for SendSink<'_, T> {
 impl<'a, T> Sink<T> for SendSink<'a, T> {
     type Error = SendError<T>;
 
-    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self.get_mut().0.as_mut() {
+            Some(inner) => Pin::new(inner).poll(cx),
+            // A closed sink reports ready; `start_send` rejects the item.
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        match self.get_mut().0.as_mut() {
+            Some(inner) => {
+                // Superseding a parked send: if the previous item is still parked in
+                // the channel (a mid-flight restart before `poll_flush` finished), its
+                // queued entry is removed and its message destroyed, so a superseded
+                // pending message is cancelled exactly like a dropped future's. In
+                // normal sequential sink usage the entry is already flushed and this
+                // is a no-op discriminant check.
+                if let Some(parked) = inner.parked.take() {
+                    let mut guard = inner.sender.inner.core.lock();
+                    guard.pending_sends.remove(parked.id);
+                }
+                inner.msg = MessageOrId::Message(item);
+                Ok(())
+            }
+            None => Err(SendError(item)),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if let Some(inner) = self.get_mut().0.as_mut() {
+            if matches!(inner.msg, MessageOrId::Message(_)) || inner.parked.is_some() {
+                ready!(Pin::new(inner).poll(cx))?;
+            }
+        }
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        // Superseding a parked send: if the previous item is still parked in
-        // the channel (a mid-flight restart before `poll_flush` finished), its
-        // queued entry is removed and its message destroyed, so a superseded
-        // pending message is cancelled exactly like a dropped future's. In
-        // normal sequential sink usage the entry is already flushed and this
-        // is a no-op discriminant check.
-        if let Some(parked) = self.0.parked.take() {
-            let mut guard = self.0.sender.inner.core.lock();
-            guard.pending_sends.remove(parked.id);
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let this = self.get_mut();
+        if let Some(inner) = this.0.as_mut() {
+            if matches!(inner.msg, MessageOrId::Message(_)) || inner.parked.is_some() {
+                ready!(Pin::new(inner).poll(cx))?;
+            }
+            // Release only our own sender handle instead of closing the shared
+            // channel: concurrent sinks (cloned senders) must keep working
+            // after one of them closes. If we hold the last handle, dropping
+            // it closes the channel naturally via `SenderInner::drop`.
+            this.0.take();
         }
-        self.0.msg = MessageOrId::Message(item);
-        Ok(())
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if matches!(self.0.msg, MessageOrId::Message(_)) || self.0.parked.is_some() {
-            ready!(Pin::new(&mut self.0).poll(cx))?;
-        }
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if matches!(self.0.msg, MessageOrId::Message(_)) || self.0.parked.is_some() {
-            ready!(Pin::new(&mut self.0).poll(cx))?;
-        }
-        self.0.sender.close();
         Poll::Ready(Ok(()))
     }
 }
 
 impl<'a, T> Clone for SendSink<'a, T> {
     fn clone(&self) -> SendSink<'a, T> {
-        SendSink(SendFuture {
-            sender: self.0.sender.clone(),
+        SendSink(self.0.as_ref().map(|inner| SendFuture {
+            sender: inner.sender.clone(),
             msg: MessageOrId::Invalid,
             parked: None,
-        })
+        }))
     }
 }
 
@@ -1374,20 +1401,20 @@ impl<T> Sender<T> {
     /// The sink borrows the sender: creating it performs no atomic
     /// reference-count operation.
     pub fn sink(&self) -> SendSink<'_, T> {
-        SendSink(SendFuture {
+        SendSink(Some(SendFuture {
             sender: Cow::Borrowed(self),
             msg: MessageOrId::Invalid,
             parked: None,
-        })
+        }))
     }
 
     /// Converts this sender into a sink that can be used to send values into the channel.
     pub fn into_sink<'a>(self) -> SendSink<'a, T> {
-        SendSink(SendFuture {
+        SendSink(Some(SendFuture {
             sender: Cow::Owned(self),
             msg: MessageOrId::Invalid,
             parked: None,
-        })
+        }))
     }
 }
 
