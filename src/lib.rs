@@ -49,7 +49,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::ready;
 use std::task::{Context, Poll};
@@ -1088,6 +1088,18 @@ impl<'a, T> Drop for RecvFuture<'a, T> {
 struct ChannelCore<T> {
     state: Mutex<SharedState<T>>,
     consumed_park: AtomicU64,
+    /// Live `Sender` handle count, starting at 1. `fetch_add` on `clone`,
+    /// `fetch_sub` on drop (all `Relaxed`, matching flume); includes the
+    /// handle it is read from. Orthogonal to capacity, queued messages, and
+    /// `close()`. Plain loads only — never touched on the send/recv path.
+    sender_count: AtomicUsize,
+    /// Live `Receiver` handle count; mirror of `sender_count`.
+    receiver_count: AtomicUsize,
+    /// Shared disconnect latch. Set exactly on the last-drop transition of
+    /// EITHER side (the `fetch_sub == 1` moment), never on partial drops,
+    /// regardless of queued messages or capacity. Read by both
+    /// `Sender::is_disconnected` and `Receiver::is_disconnected`.
+    disconnected: AtomicBool,
 }
 
 impl<T> ChannelCore<T> {
@@ -1095,6 +1107,9 @@ impl<T> ChannelCore<T> {
         Self {
             state: Mutex::new(state),
             consumed_park: AtomicU64::new(0),
+            sender_count: AtomicUsize::new(1),
+            receiver_count: AtomicUsize::new(1),
+            disconnected: AtomicBool::new(false),
         }
     }
 
@@ -1145,6 +1160,15 @@ impl<T> Clone for Sender<T> {
         // handles, and `SenderInner::drop` closes the channel when the last
         // one is gone. This keeps `clone` (and thus `send_async`) a single
         // relaxed refcount increment.
+        //
+        // The observable `sender_count` is a separate plain counter (see
+        // `ChannelCore`): one `Relaxed` increment here, decrement on drop.
+        // `send_async` borrows instead of cloning, so the hot async path pays
+        // nothing.
+        self.inner
+            .core
+            .sender_count
+            .fetch_add(1, Ordering::Relaxed);
         Self {
             inner: Arc::clone(&self.inner),
         }
@@ -1396,6 +1420,34 @@ impl<T> Sender<T> {
         self.inner.core.lock().is_closed()
     }
 
+    /// Returns the number of live `Sender` handles on this channel, including
+    /// this one.
+    ///
+    /// Starts at 1; `clone` adds one, `drop` removes one. Orthogonal to
+    /// capacity, queued messages, and `close()`: closing the channel drops no
+    /// handles, so counts are unaffected. Same value from either end.
+    pub fn sender_count(&self) -> usize {
+        self.inner.core.sender_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of live `Receiver` handles on this channel.
+    ///
+    /// Same counting rules as [`Sender::sender_count`]; same value from
+    /// either end.
+    pub fn receiver_count(&self) -> usize {
+        self.inner.core.receiver_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns true if the channel is disconnected, i.e. all receivers have
+    /// been dropped.
+    ///
+    /// This reads one latch shared with [`Receiver::is_disconnected`]: it is
+    /// set exactly when the last receiver drops, even with messages still
+    /// queued. `close()` does not set it — only handle drops do.
+    pub fn is_disconnected(&self) -> bool {
+        self.inner.core.disconnected.load(Ordering::Relaxed)
+    }
+
     /// Returns a sink that can be used to send values into the channel.
     ///
     /// The sink borrows the sender: creating it performs no atomic
@@ -1418,8 +1470,17 @@ impl<T> Sender<T> {
     }
 }
 
-// No `Drop for Sender`: dropping a `Sender` releases its `Arc<SenderInner>`,
-// and `SenderInner::drop` closes the channel when the last handle is gone.
+// Dropping a `Sender` releases its `Arc<SenderInner>` (and
+// `SenderInner::drop` closes the channel when the last handle is gone), and
+// decrements the observable `sender_count`, latching the shared disconnect
+// flag exactly on the last-sender transition.
+impl<T> Drop for Sender<T> {
+    fn drop(&mut self) {
+        if self.inner.core.sender_count.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.inner.core.disconnected.store(true, Ordering::Relaxed);
+        }
+    }
+}
 
 struct ReceiverInner<T> {
     core: Arc<ChannelCore<T>>,
@@ -1464,6 +1525,13 @@ impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
         // No `recv_count` bump: see `Sender::clone`; the `Arc` strong count
         // tracks live handles and `ReceiverInner::drop` closes the channel.
+        //
+        // The observable `receiver_count` is a separate plain counter (see
+        // `ChannelCore`): one `Relaxed` increment here, decrement on drop.
+        self.inner
+            .core
+            .receiver_count
+            .fetch_add(1, Ordering::Relaxed);
         Self {
             inner: Arc::clone(&self.inner),
         }
@@ -1787,6 +1855,34 @@ impl<T> Receiver<T> {
         self.inner.core.lock().is_closed()
     }
 
+    /// Returns the number of live `Sender` handles on this channel.
+    ///
+    /// Same counting rules as [`Sender::sender_count`]; same value from
+    /// either end.
+    pub fn sender_count(&self) -> usize {
+        self.inner.core.sender_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of live `Receiver` handles on this channel,
+    /// including this one.
+    ///
+    /// Starts at 1; `clone` adds one, `drop` removes one. Orthogonal to
+    /// capacity, queued messages, and `close()`. Same value from either end.
+    pub fn receiver_count(&self) -> usize {
+        self.inner.core.receiver_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns true if the channel is disconnected, i.e. all senders have
+    /// been dropped.
+    ///
+    /// This reads one latch shared with [`Sender::is_disconnected`]: it is
+    /// set exactly when the last sender drops, even with messages still
+    /// queued — and queued messages stay receivable. `close()` does not set
+    /// it — only handle drops do.
+    pub fn is_disconnected(&self) -> bool {
+        self.inner.core.disconnected.load(Ordering::Relaxed)
+    }
+
     /// Returns a stream of messages from the channel.
     ///
     /// The stream borrows the receiver: creating it performs no atomic
@@ -1813,9 +1909,23 @@ impl<T> Receiver<T> {
     }
 }
 
-// No `Drop for Receiver`: dropping a `Receiver` releases its
-// `Arc<ReceiverInner>`, and `ReceiverInner::drop` closes the channel when the
-// last handle is gone.
+// Dropping a `Receiver` releases its `Arc<ReceiverInner>` (and
+// `ReceiverInner::drop` closes the channel when the last handle is gone),
+// and decrements the observable `receiver_count`, latching the shared
+// disconnect flag exactly on the last-receiver transition.
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+        if self
+            .inner
+            .core
+            .receiver_count
+            .fetch_sub(1, Ordering::Relaxed)
+            == 1
+        {
+            self.inner.core.disconnected.store(true, Ordering::Relaxed);
+        }
+    }
+}
 
 /// An fixed-sized iterator over the msgs drained from a channel.
 #[derive(Debug)]
