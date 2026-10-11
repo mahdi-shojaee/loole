@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 0.6.0
+- Added `sender_count`/`receiver_count`/`is_disconnected` to `Sender` and `Receiver` (flume parity via relaxed counters + shared disconnect latch; hot send/recv paths untouched)
+- Added `SendFuture::is_disconnected` and `RecvStream::is_disconnected`
+- Added `FusedFuture` for `SendFuture` (terminated when disconnected) and `RecvFuture` (terminated when disconnected and empty), and `FusedStream` for `RecvStream`
+- Added `Debug` for `Iter`, `TryIter`, and `IntoIter`
+
 ## Version 0.5.1
 - Fixed `SendSink` soundness under concurrent `forward()`: `poll_ready` now flushes the buffered send instead of reporting always-ready (fixes `forward()` delivering only the last item)
 - Fixed `SendSink::poll_close` to release only its own sender handle instead of closing the shared channel (fixes spurious `SendError` under concurrent sinks)
