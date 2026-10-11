@@ -61,7 +61,7 @@ fn main() {
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.5.0"
+loole = "0.5.1"
 ```
 
 ## Run Benchmarks

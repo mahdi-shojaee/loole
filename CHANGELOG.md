@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 0.5.1
+- Fixed `SendSink` soundness under concurrent `forward()`: `poll_ready` now flushes the buffered send instead of reporting always-ready (fixes `forward()` delivering only the last item)
+- Fixed `SendSink::poll_close` to release only its own sender handle instead of closing the shared channel (fixes spurious `SendError` under concurrent sinks)
+
 ## Version 0.5.0
 - Performance: `send_async`/`recv_async` (and `sink`/`stream`) now return futures that borrow the sender/receiver instead of cloning it, removing four atomic reference-count operations per message (SPSC async-async bounded(100): up to +39% at 32 B, +7% at 16384 B on P-cores)
 - Added `Sender::into_send_async` and `Receiver::into_recv_async`: owned `'static` futures that keep the channel open until dropped, for `tokio::spawn` and stored futures (the previous `send_async`/`recv_async` behavior)
