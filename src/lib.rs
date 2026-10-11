@@ -56,6 +56,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use futures_core::Stream;
+use futures_core::future::FusedFuture;
+use futures_core::stream::FusedStream;
 use futures_sink::Sink;
 
 use mutex::MutexGuard;
@@ -304,6 +306,28 @@ pub struct TryIter<'a, T> {
 /// An owned iterator over the msgs received synchronously from a channel.
 pub struct IntoIter<T> {
     receiver: Receiver<T>,
+}
+
+impl<T> std::fmt::Debug for Iter<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Iter").field("receiver", &self.receiver).finish()
+    }
+}
+
+impl<T> std::fmt::Debug for TryIter<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TryIter")
+            .field("receiver", &self.receiver)
+            .finish()
+    }
+}
+
+impl<T> std::fmt::Debug for IntoIter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntoIter")
+            .field("receiver", &self.receiver)
+            .finish()
+    }
 }
 
 impl<T> Iterator for IntoIter<T> {
@@ -692,6 +716,11 @@ impl<'a, T> SendFuture<'a, T> {
     pub fn capacity(&self) -> Option<usize> {
         self.sender.capacity()
     }
+
+    /// See [`Sender::is_disconnected`].
+    pub fn is_disconnected(&self) -> bool {
+        self.sender.is_disconnected()
+    }
 }
 
 /// A sink that allows sending values into a channel.
@@ -921,6 +950,12 @@ impl<'a, T> Future for SendFuture<'a, T> {
     }
 }
 
+impl<'a, T> FusedFuture for SendFuture<'a, T> {
+    fn is_terminated(&self) -> bool {
+        self.sender.is_disconnected()
+    }
+}
+
 impl<'a, T> Drop for SendFuture<'a, T> {
     fn drop(&mut self) {
         // Cancellation: a pending send's queued entry is removed and its
@@ -1043,6 +1078,12 @@ impl<'a, T> Future for RecvFuture<'a, T> {
             drop(guard);
         }
         Poll::Pending
+    }
+}
+
+impl<'a, T> FusedFuture for RecvFuture<'a, T> {
+    fn is_terminated(&self) -> bool {
+        self.receiver.is_disconnected() && self.receiver.is_empty()
     }
 }
 
@@ -2020,6 +2061,11 @@ impl<T> RecvStream<'_, T> {
         self.0.capacity()
     }
 
+    /// See [`Receiver::is_disconnected`].
+    pub fn is_disconnected(&self) -> bool {
+        self.0.receiver.is_disconnected()
+    }
+
     /// Returns whether the SendSinks are belong to the same channel.
     pub fn same_channel(&self, other: &RecvStream<'_, T>) -> bool {
         self.0.receiver.same_channel(&other.0.receiver)
@@ -2052,6 +2098,12 @@ impl<'a, T> Stream for RecvStream<'a, T> {
             Poll::Pending => Poll::Pending,
             Poll::Ready(item) => Poll::Ready(item.ok()),
         }
+    }
+}
+
+impl<'a, T> FusedStream for RecvStream<'a, T> {
+    fn is_terminated(&self) -> bool {
+        self.0.is_terminated()
     }
 }
 
