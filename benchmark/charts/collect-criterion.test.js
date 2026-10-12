@@ -198,9 +198,9 @@ test("collect reads new/estimates.json, prefers newest mtime per cell, skips non
     const t = new Date(whenMs);
     fs.utimesSync(path.join(d, "estimates.json"), t, t);
   };
-  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 1000);
-  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 2e6, 2000); // newer wins
-  write("latency-32-n1000-alloc_spsc-s1r1", "async-async_b1_flume", 4e6, 3000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_loole", 1e6, 1000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_loole", 2e6, 2000); // newer wins
+  write("latency-32-n1000-touched_spsc-s1r1", "async-async_b1_flume", 4e6, 3000);
   write("select", "async_select_recv_buffer_0", 1e6, 4000); // ignored
 
   const cells = cc.collect(dir, 32);
@@ -224,8 +224,8 @@ test("collect keeps only the deepest workload (-n) per metric+size", () => {
   };
   // same cell, different workload counts; a *newer mtime* on the smaller run
   // must not win against the deeper run's selection
-  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 5000);
-  write("throughput-32-n100000-alloc_spsc-s1r1", "sync-sync_b0_loole", 2e9, 1000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_loole", 1e6, 5000);
+  write("throughput-32-n100000-touched_spsc-s1r1", "sync-sync_b0_loole", 2e9, 1000);
 
   const cells = cc.collect(dir, 32);
   const tp = cells.filter((c) => c.metric === "throughput");
@@ -235,10 +235,10 @@ test("collect keeps only the deepest workload (-n) per metric+size", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Run markers (freshness): runs/last-<size>-alloc.json
+// Run markers (freshness): runs/last-<size>-<payload>.json
 // ---------------------------------------------------------------------------
 
-test("collect defaults to alloc and ignores other payload modes", () => {
+test("collect defaults to touched and ignores other payload modes", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   const write = (groupDir, funcDir, mean, whenMs) => {
     const d = path.join(dir, groupDir, funcDir, "new");
@@ -248,13 +248,13 @@ test("collect defaults to alloc and ignores other payload modes", () => {
     fs.utimesSync(path.join(d, "estimates.json"), t, t);
   };
   write("throughput-32-n1000-shared_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
-  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
-  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_flume", 1e6, 2000);
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_flume", 1e6, 2000);
 
   const cells = cc.collect(dir, 32);
   assert.equal(cells.length, 1);
   assert.equal(cells[0].crate, "flume");
-  assert.equal(cells[0].payload, "alloc");
+  assert.equal(cells[0].payload, "touched");
 });
 
 test("collect with payload=touched returns only touched cells", () => {
@@ -299,7 +299,7 @@ test("readRunMarker reads the per-payload marker name", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
   fs.writeFileSync(
-    path.join(dir, "runs", "last-32-alloc.json"),
+    path.join(dir, "runs", "last-32-shared.json"),
     JSON.stringify({ started_at: 1_700_000_000_000, message_size: 32 }) + "\n"
   );
   fs.writeFileSync(
@@ -307,17 +307,17 @@ test("readRunMarker reads the per-payload marker name", () => {
     JSON.stringify({ started_at: 1_700_000_000_001, message_size: 32 }) + "\n"
   );
   // Each payload reads only its own marker — no cross-talk.
-  assert.equal(cc.readRunMarker(dir, 32).started_at, 1_700_000_000_000);
-  assert.equal(cc.readRunMarker(dir, 32, "touched").started_at, 1_700_000_000_001);
+  assert.equal(cc.readRunMarker(dir, 32, "shared").started_at, 1_700_000_000_000);
+  assert.equal(cc.readRunMarker(dir, 32).started_at, 1_700_000_000_001);
 });
 
 test("readRunMarker returns null when missing or invalid", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   assert.equal(cc.readRunMarker(dir, 32), null);
   fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "runs", "last-32-alloc.json"), "not json");
+  fs.writeFileSync(path.join(dir, "runs", "last-32-touched.json"), "not json");
   assert.equal(cc.readRunMarker(dir, 32), null);
-  fs.writeFileSync(path.join(dir, "runs", "last-32-alloc.json"), JSON.stringify({ nope: 1 }));
+  fs.writeFileSync(path.join(dir, "runs", "last-32-touched.json"), JSON.stringify({ nope: 1 }));
   assert.equal(cc.readRunMarker(dir, 32), null);
 });
 
@@ -380,8 +380,8 @@ test("collect with minMtimeMs excludes estimates older than the run start", () =
     fs.utimesSync(path.join(d, "estimates.json"), t, t);
   };
   // fresh cell (written after cutoff) and stale leftover cell (older run)
-  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
-  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_flume", 9e9, 500);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_flume", 9e9, 500);
 
   const fresh = cc.collect(dir, 32, { minMtimeMs: 1000 });
   assert.equal(fresh.length, 1);

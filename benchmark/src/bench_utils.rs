@@ -7,7 +7,7 @@ use std::{error::Error, fmt::Display, future::Future, thread, time::Instant};
 use tokio::runtime::Runtime;
 
 use crate::config::{DEFAULT_LATENCY_ROUNDS, DEFAULT_LATENCY_WARMUP};
-use crate::message_type::{Message, PayloadKind};
+use crate::message_type::Message;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
@@ -169,7 +169,6 @@ pub fn setup_ping_pong<C: LatencyChannel<Message>>(
     cap: Option<usize>,
     message_size: usize,
     warmup: usize,
-    payload: PayloadKind,
 ) -> Result<LatencyProbe, BenchError> {
     // tokio::spawn in spawn_echoer needs the runtime in scope when called
     // from plain (non-async) setup code.
@@ -196,10 +195,10 @@ pub fn setup_ping_pong<C: LatencyChannel<Message>>(
         }))
     };
 
-    run_rounds::<C>(rt, combo, &sender_tx, &mut sender_rx, message_size, warmup, payload);
+    run_rounds::<C>(rt, combo, &sender_tx, &mut sender_rx, message_size, warmup);
 
     let rounds_fn = Box::new(move |rt: &Runtime, n: usize| {
-        run_rounds::<C>(rt, combo, &sender_tx, &mut sender_rx, message_size, n, payload);
+        run_rounds::<C>(rt, combo, &sender_tx, &mut sender_rx, message_size, n);
     });
     Ok(LatencyProbe {
         rounds_fn,
@@ -214,17 +213,10 @@ fn run_rounds<C: LatencyChannel<Message>>(
     rx: &mut C::Receiver,
     message_size: usize,
     n: usize,
-    payload: PayloadKind,
 ) {
-    // The echoed content matches the run's payload mode so benchmark IDs
-    // stay truthful. `Shared` has no owned-content probe (its content is one
-    // cloned Arc, unrepresentable through `LatencyChannel<Message>`); shared
-    // runs skip the latency suite, so this arm is a fallback that preserves
-    // the historical zeroed-content behavior.
-    let message = || match payload {
-        PayloadKind::Alloc | PayloadKind::Shared => Message::new(message_size),
-        PayloadKind::Touched => Message::new_touched(message_size),
-    };
+    // The latency suite runs in touched mode only (shared runs skip it, and
+    // touched is the default): every round trip pings realistic content.
+    let message = || Message::new(message_size);
     if combo.sender_is_async() {
         rt.block_on(async {
             for _ in 0..n {
@@ -249,9 +241,8 @@ pub fn ping_pong_latency_n<C: LatencyChannel<Message>>(
     message_size: usize,
     warmup: usize,
     rounds: usize,
-    payload: PayloadKind,
 ) -> Result<LatencyResult, BenchError> {
-    let mut probe = setup_ping_pong::<C>(rt, combo, cap, message_size, warmup, payload)?;
+    let mut probe = setup_ping_pong::<C>(rt, combo, cap, message_size, warmup)?;
     let start = Instant::now();
     probe.run(rt, rounds);
     Ok(LatencyResult {
@@ -265,16 +256,14 @@ pub fn ping_pong_latency<C: LatencyChannel<Message>>(
     combo: Combo,
     cap: Option<usize>,
     message_size: usize,
-    payload: PayloadKind,
 ) -> Result<LatencyResult, BenchError> {
-    ping_pong_latency_n::<C>(rt, combo, cap, message_size, LATENCY_WARMUP, LATENCY_NO, payload)
+    ping_pong_latency_n::<C>(rt, combo, cap, message_size, LATENCY_WARMUP, LATENCY_NO)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         ping_pong_latency, setup_ping_pong, BenchError, Combo, LatencyChannel, LatencyChannels,
-        PayloadKind,
     };
     use crate::message_type::Message;
     use std::future::Future;
@@ -332,7 +321,7 @@ mod tests {
 
     fn latency(combo: Combo) -> Option<usize> {
         let rt = runtime();
-        ping_pong_latency::<TestChannel>(&rt, combo, Some(10), 8, PayloadKind::Alloc)
+        ping_pong_latency::<TestChannel>(&rt, combo, Some(10), 8)
             .ok()
             .map(|result| result.latency_ns)
     }
@@ -361,7 +350,7 @@ mod tests {
     fn probe_split_setup_run_measures_nonzero_time() {
         let rt = runtime();
         let mut probe =
-            setup_ping_pong::<TestChannel>(&rt, Combo::SyncSync, Some(10), 8, 100, PayloadKind::Alloc).unwrap();
+            setup_ping_pong::<TestChannel>(&rt, Combo::SyncSync, Some(10), 8, 100).unwrap();
         let start = Instant::now();
         probe.run(&rt, 1_000);
         assert!(start.elapsed().as_nanos() > 0);
@@ -419,10 +408,10 @@ mod tests {
 
         let rt = runtime();
         assert!(matches!(
-            setup_ping_pong::<NoAsync>(&rt, Combo::AsyncAsync, Some(10), 8, 10, PayloadKind::Alloc),
+            setup_ping_pong::<NoAsync>(&rt, Combo::AsyncAsync, Some(10), 8, 10),
             Err(BenchError::AsyncNotSupported)
         ));
-        assert!(setup_ping_pong::<NoAsync>(&rt, Combo::SyncSync, Some(10), 8, 10, PayloadKind::Alloc).is_ok());
+        assert!(setup_ping_pong::<NoAsync>(&rt, Combo::SyncSync, Some(10), 8, 10).is_ok());
     }
 
     #[test]
@@ -435,7 +424,6 @@ mod tests {
                 combo,
                 Some(1),
                 8,
-                PayloadKind::Alloc,
             );
             assert!(matches!(res, Err(BenchError::AsyncNotSupported)));
         }
@@ -450,7 +438,6 @@ mod tests {
             Combo::SyncSync,
             Some(0),
             8,
-            PayloadKind::Alloc,
         );
         assert!(matches!(res, Err(BenchError::ZeroCapacityNotSupported)));
     }

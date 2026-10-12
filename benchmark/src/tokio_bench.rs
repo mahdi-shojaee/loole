@@ -336,9 +336,8 @@ pub fn setup_latency(
     cap: Option<usize>,
     message_size: usize,
     warmup: usize,
-    payload: PayloadKind,
 ) -> Result<LatencyProbe, BenchError> {
-    setup_ping_pong::<TokioChannel>(rt, combo, cap, message_size, warmup, payload)
+    setup_ping_pong::<TokioChannel>(rt, combo, cap, message_size, warmup)
 }
 
 pub fn bench_latency(
@@ -346,7 +345,6 @@ pub fn bench_latency(
     combo: Combo,
     cap: Option<usize>,
     message_size: usize,
-    payload: PayloadKind,
 ) -> Result<LatencyResult, BenchError> {
-    ping_pong_latency::<TokioChannel>(rt, combo, cap, message_size, payload)
+    ping_pong_latency::<TokioChannel>(rt, combo, cap, message_size)
 }

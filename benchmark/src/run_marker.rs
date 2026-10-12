@@ -113,9 +113,9 @@ mod tests {
         let dir = test_dir("write");
         let mut cfg = Config::default();
         cfg.message_size = 32;
-        cfg.payload = crate::message_type::PayloadKind::Alloc;
+        cfg.payload = crate::message_type::PayloadKind::Touched;
         let path = record_run_start_at(&dir, &cfg).unwrap();
-        assert_eq!(path, dir.join("runs").join("last-32-alloc.json"));
+        assert_eq!(path, dir.join("runs").join("last-32-touched.json"));
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains("\"message_size\":32"), "{body}");
         assert!(body.contains("\"started_at\":"), "{body}");
@@ -130,7 +130,7 @@ mod tests {
         record_run_start_at(&dir, &cfg).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         record_run_start_at(&dir, &cfg).unwrap();
-        let body = fs::read_to_string(dir.join("runs").join("last-256-alloc.json")).unwrap();
+        let body = fs::read_to_string(dir.join("runs").join("last-256-touched.json")).unwrap();
         // Constant size: exactly one marker, and it parses as one line of JSON.
         assert_eq!(body.lines().count(), 1);
         assert!(body.starts_with('{'));
@@ -156,7 +156,7 @@ mod tests {
             worker_threads: 0,
             isolate_crates: false,
             no_warmup_cell: false,
-            payload: crate::message_type::PayloadKind::Alloc,
+            payload: crate::message_type::PayloadKind::Touched,
         };
         let path = record_run_start_at(&dir, &cfg).unwrap();
         let body = fs::read_to_string(path).unwrap();

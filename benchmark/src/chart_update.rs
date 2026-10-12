@@ -24,8 +24,8 @@ pub enum SkipReason {
     /// The run covers only part of the matrix (metric filter, crate subset,
     /// or a positional criterion filter).
     PartialRun,
-    /// Payload mode with no chart set (shared); charts render alloc and
-    /// touched modes as parallel per-payload outputs.
+    /// Payload mode with no chart set (shared); charts render the default
+    /// touched mode.
     UnchartedPayload,
 }
 
@@ -39,7 +39,7 @@ impl Display for SkipReason {
             SkipReason::UnchartedPayload => {
                 write!(
                     f,
-                    "payload mode is not charted (charts render alloc and touched modes)"
+                    "payload mode is not charted (charts render touched mode only)"
                 )
             }
         }
@@ -108,7 +108,7 @@ pub fn should_update_charts(
     if is_meta_run(passthrough) {
         return Err(SkipReason::MetaCommand);
     }
-    if !matches!(cfg.payload, PayloadKind::Alloc | PayloadKind::Touched) {
+    if cfg.payload != PayloadKind::Touched {
         return Err(SkipReason::UnchartedPayload);
     }
     if !cfg.metric.includes_throughput()

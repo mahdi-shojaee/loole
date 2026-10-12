@@ -15,7 +15,7 @@ use crate::message_type::PayloadKind;
 /// messages. Returns `Some((sent, received))`, or `None` when the cell is unsupported; panics via assert on mismatch only
 /// in tests — here return the counts and let the caller decide.
 pub fn run_once(rt: &Runtime, krate: CrateName, msg_no: usize) -> Option<(usize, usize)> {
-    let run = setup_throughput(rt, krate, Combo::AsyncAsync, 1, 1, Some(10), msg_no, 256, PayloadKind::Alloc).ok()?;
+    let run = setup_throughput(rt, krate, Combo::AsyncAsync, 1, 1, Some(10), msg_no, 256, PayloadKind::Touched).ok()?;
     Some(rt.block_on(run.join_all()))
 }
 

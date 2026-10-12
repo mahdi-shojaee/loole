@@ -468,7 +468,6 @@ fn latency_group(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) 
                                 cap,
                                 cfg.message_size,
                                 cfg.latency_warmup,
-                                cfg.payload,
                             )
                             .expect("cell checked by supports_latency")
                         },

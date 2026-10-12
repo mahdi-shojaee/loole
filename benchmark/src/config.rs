@@ -115,7 +115,7 @@ impl Default for Config {
             worker_threads: 0,
             isolate_crates: false,
             no_warmup_cell: false,
-            payload: PayloadKind::Alloc,
+            payload: PayloadKind::Touched,
         }
     }
 }
@@ -783,7 +783,7 @@ mod tests {
         assert_eq!(cfg.worker_threads, 0);
         assert!(!cfg.isolate_crates);
         assert!(!cfg.no_warmup_cell);
-        assert_eq!(cfg.payload, crate::message_type::PayloadKind::Alloc);
+        assert_eq!(cfg.payload, crate::message_type::PayloadKind::Touched);
     }
 
     #[test]

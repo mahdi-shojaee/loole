@@ -39,11 +39,8 @@ as empty spots in the charts. Every dimension above is configurable — see
    (`--list`, `--help`, `--version`) measure nothing and leave the marker
    alone.
 3. After a **full** run — all crates, both metrics, no bench filter — the
-   suite automatically rebuilds the chart set for that run's payload mode:
-   `benchmark/charts/benchmark-result-{throughput,latency}-<size>.json` for
-   `alloc` (historical payload-less names), with a `-touched` suffix for
-   `touched`, and re-renders the SVGs. Each mode refreshes only its own set;
-   the two never mix. Partial or failed runs never touch the charts;
+   suite automatically rebuilds `benchmark/charts/benchmark-result-{throughput,latency}-<size>.json`
+   and re-renders the SVGs. Partial or failed runs never touch the charts;
    the suite prints the manual command instead. `shared` has no chart set.
 
 ## Quick start
@@ -76,7 +73,7 @@ Suite options (each is also settable via its environment variable):
 | `--worker-threads` | | `BENCH_WORKER_THREADS` | `0` | tokio worker count (0 = one per CPU) |
 | `--isolate-crates` | | `BENCH_ISOLATE_CRATES` | off | one process per crate |
 | `--no-warmup-cell` | | `BENCH_NO_WARMUP_CELL` | off | skip pre-timing warmup |
-| `--payload` | | `BENCH_PAYLOAD` | `alloc` | `alloc` (fresh Vec per send, allocator-inclusive), `shared` (one Arc per sender: channel-isolation control, not a workload model, never charted), or `touched` (a distinct fresh Vec per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic; charted as a parallel `-touched` set). Latency runs in `alloc` and `touched` modes with matching content (skipped in `shared`, which has no owned-content probe and no chart set); each mode charts its own latency set. |
+| `--payload` | | `BENCH_PAYLOAD` | `touched` | `touched` (a distinct fresh `Vec` per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic; the charted mode) or `shared` (one `Arc` per sender: channel-isolation control, not a workload model, never charted). The latency suite runs in `touched` mode; `shared` runs skip it (no owned-content probe). |
 
 All native criterion options pass straight through:
 
@@ -125,7 +122,7 @@ manual form — useful after a partial (filtered) run:
 ```bash
 cd benchmark/charts
 npm install                 # only needed when node_modules is missing
-npm run update -- <size> [payload]  # <size> must match the measured message size; payload is alloc (default) or touched
+npm run update -- <size>    # <size> must match the measured message size
 ```
 
 The converter rebuilds each chart cell from the newest estimates of the

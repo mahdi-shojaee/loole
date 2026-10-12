@@ -1,10 +1,9 @@
 "use strict";
 
-// Rebuilds benchmark-result-{throughput,latency}-<size>[-<payload>].json from
-// criterion's output (target/criterion/**/new/estimates.json), in the exact
-// schema the existing renderer (main.js) expects. The `alloc` set keeps the
-// historical payload-less filenames; `touched` gets a `-touched` suffix, so
-// the two modes never mix in one file.
+// Rebuilds benchmark-result-{throughput,latency}-<size>.json from criterion's
+// output (target/criterion/**/new/estimates.json), in the exact schema the
+// existing renderer (main.js) expects. The chart set renders the `touched`
+// payload mode only (`shared` is a control with no chart set).
 //
 // Benchmark IDs are self-describing (see benchmark/src/ids.rs):
 //   <metric>-<size>-n<count>-<payload>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
@@ -95,12 +94,13 @@ function cellValue(meta, meanNs) {
 
 const RUNS_DIR = "runs";
 
-// Payload modes with a chart set (mirrors chart_update::should_update_charts:
-// shared is a control, not a workload model, and has no charts).
-const CHARTED_PAYLOADS = ["alloc", "touched"];
+// Payload modes with a chart set: just `touched` (mirrors
+// chart_update::should_update_charts; `shared` is a control, not a workload
+// model, and has no charts).
+const CHARTED_PAYLOADS = ["touched"];
 
 // Returns the parsed marker { started_at, ... } or null when absent/invalid.
-function readRunMarker(criterionDir, size, payload = "alloc") {
+function readRunMarker(criterionDir, size, payload = "touched") {
   try {
     const raw = fs.readFileSync(path.join(criterionDir, RUNS_DIR, `last-${size}-${payload}.json`), "utf8");
     const marker = JSON.parse(raw);
@@ -141,13 +141,13 @@ function markerCoverageProblem(marker) {
 // --- Scanning ---------------------------------------------------------------
 
 // Reads <criterionDir>/<group>/<func>/new/estimates.json for benches of
-// `size` and `opts.payload` (default "alloc"). Returns one cell per (metric,
-// topology, combo, cap, crate) using the deepest workload, tie-broken by
-// latest run. If opts.minMtimeMs is set, estimates older than that (ms epoch)
-// are treated as stale and skipped.
+// `size` in the charted `touched` mode (opts.payload overrides, used by
+// tests). Returns one cell per (metric, topology, combo, cap, crate) using
+// the deepest workload, tie-broken by latest run. If opts.minMtimeMs is set,
+// estimates older than that (ms epoch) are treated as stale and skipped.
 function collect(criterionDir, size, opts = {}) {
   const minMtime = opts.minMtimeMs ?? 0;
-  const wantedPayload = opts.payload ?? "alloc";
+  const wantedPayload = opts.payload ?? "touched";
   const cells = new Map();
   if (!fs.existsSync(criterionDir)) return [];
   for (const groupDir of fs.readdirSync(criterionDir)) {
@@ -167,7 +167,7 @@ function collect(criterionDir, size, opts = {}) {
       if (mtime < minMtime) continue; // written before the latest run's start
       const meta = parseId(groupDir, funcDir);
       if (!meta || meta.size !== size) continue;
-      if (meta.payload !== wantedPayload) continue; // one chart set per payload mode
+      if (meta.payload !== wantedPayload) continue; // one chart set: touched
       const key = [
         meta.metric,
         meta.topology.name,
@@ -263,15 +263,14 @@ function buildData(metric, cells) {
 
 function main() {
   const size = Number(process.argv[2] || process.env.MESSAGE_SIZE || "256");
-  const payload = process.argv[3] || process.env.PAYLOAD || "alloc";
+  const payload = process.argv[3] || process.env.PAYLOAD || "touched";
   if (!CHARTED_PAYLOADS.includes(payload)) {
     console.error(
-      `payload "${payload}" has no chart set (charts render ${CHARTED_PAYLOADS.join(" and ")} modes); ` +
-        "re-run with --payload alloc or --payload touched"
+      `payload "${payload}" has no chart set (charts render ${CHARTED_PAYLOADS.join(" and ")} mode only); ` +
+        "re-run with --payload touched"
     );
     process.exit(1);
   }
-  const suffix = payload === "alloc" ? "" : `-${payload}`;
   const criterionDir =
     process.env.CRITERION_DIR ||
     process.env.CRITERION_HOME ||
@@ -312,7 +311,7 @@ function main() {
       continue;
     }
     const data = buildData(metric, cells);
-    const out = path.join(__dirname, `benchmark-result-${metric}-${size}${suffix}.json`);
+    const out = path.join(__dirname, `benchmark-result-${metric}-${size}.json`);
     fs.writeFileSync(out, JSON.stringify(data, null, 2) + "\n");
     console.log(`wrote ${path.basename(out)} (${cells.filter((c) => c.metric === metric).length} cells)`);
   }

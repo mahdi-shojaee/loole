@@ -131,8 +131,8 @@ mod tests {
     #[test]
     fn group_ids_encode_metric_size_and_workload() {
         assert_eq!(
-            group_id(MetricKind::Throughput, 256, 100_000, PayloadKind::Alloc),
-            "throughput-256-n100000-alloc"
+            group_id(MetricKind::Throughput, 256, 100_000, PayloadKind::Touched),
+            "throughput-256-n100000-touched"
         );
         assert_eq!(
             group_id(MetricKind::Latency, 32, 50_000, PayloadKind::Shared),
