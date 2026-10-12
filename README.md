@@ -85,9 +85,8 @@ taskset -c "0,2,4,6,8,10,12,14" cargo bench -p benchmark --bench criterion_bench
 
 The charts below render `alloc` mode. For chat-realistic numbers rerun with
 `--payload touched` (fresh payloads with every byte touched); touched runs
-refresh the parallel `-touched` chart set below. (The committed `-touched`
-set is currently throughput-only: `touched` latency charts populate on the
-next full `touched` run.)
+refresh the parallel `-touched` chart set below (throughput plus SPSC
+latency).
 
 ## Benchmark Results
 
@@ -150,6 +149,14 @@ all touched (see [BENCHMARK.md](BENCHMARK.md)). Higher is better.
 ![SPSC: async-sync (touched)](benchmark/charts/images/spsc-async-sync-throughput-256-touched.svg)
 ![SPSC: sync-async (touched)](benchmark/charts/images/spsc-sync-async-throughput-256-touched.svg)
 ![SPSC: unbounded (touched)](benchmark/charts/images/spsc-unbounded-throughput-256-touched.svg)
+
+#### SPSC latency (touched)
+
+![SPSC: sync-sync latency (touched)](benchmark/charts/images/spsc-sync-sync-latency-256-touched.svg)
+![SPSC: async-async latency (touched)](benchmark/charts/images/spsc-async-async-latency-256-touched.svg)
+![SPSC: async-sync latency (touched)](benchmark/charts/images/spsc-async-sync-latency-256-touched.svg)
+![SPSC: sync-async latency (touched)](benchmark/charts/images/spsc-sync-async-latency-256-touched.svg)
+![SPSC: unbounded latency (touched)](benchmark/charts/images/spsc-unbounded-latency-256-touched.svg)
 
 ### Latency
 
