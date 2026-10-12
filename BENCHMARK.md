@@ -76,7 +76,7 @@ Suite options (each is also settable via its environment variable):
 | `--worker-threads` | | `BENCH_WORKER_THREADS` | `0` | tokio worker count (0 = one per CPU) |
 | `--isolate-crates` | | `BENCH_ISOLATE_CRATES` | off | one process per crate |
 | `--no-warmup-cell` | | `BENCH_NO_WARMUP_CELL` | off | skip pre-timing warmup |
-| `--payload` | | `BENCH_PAYLOAD` | `alloc` | `alloc` (fresh Vec per send, allocator-inclusive), `shared` (one Arc per sender: channel-isolation control, not a workload model, never charted), or `touched` (a distinct fresh Vec per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic; charted as a parallel `-touched` set). Throughput cells only; the latency suite always runs `alloc`, so there are no touched latency charts. |
+| `--payload` | | `BENCH_PAYLOAD` | `alloc` | `alloc` (fresh Vec per send, allocator-inclusive), `shared` (one Arc per sender: channel-isolation control, not a workload model, never charted), or `touched` (a distinct fresh Vec per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic; charted as a parallel `-touched` set). Latency runs in `alloc` and `touched` modes with matching content (skipped in `shared`, which has no owned-content probe and no chart set); each mode charts its own latency set. |
 
 All native criterion options pass straight through:
 

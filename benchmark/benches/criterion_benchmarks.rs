@@ -436,11 +436,18 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
 }
 
 fn latency_group(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) {
+    // Shared has no owned-content probe (its content is one cloned Arc,
+    // unrepresentable through `LatencyChannel<Message>`) and no chart set:
+    // the latency suite runs in alloc and touched modes only.
+    if cfg.payload == PayloadKind::Shared {
+        println!("skipping latency suite in shared payload mode (no shared latency probe)");
+        return;
+    }
     let gid = group_id(
         MetricKind::Latency,
         cfg.message_size,
         cfg.latency_rounds,
-        PayloadKind::Alloc,
+        cfg.payload,
     );
     let mut group = c.benchmark_group(format!("{gid}/{}", topology_token(Topology::Spsc, 1, 1)));
     apply_group_defaults(&mut group, overrides);
@@ -461,6 +468,7 @@ fn latency_group(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) 
                                 cap,
                                 cfg.message_size,
                                 cfg.latency_warmup,
+                                cfg.payload,
                             )
                             .expect("cell checked by supports_latency")
                         },

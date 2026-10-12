@@ -84,8 +84,9 @@ taskset -c "0,2,4,6,8,10,12,14" cargo bench -p benchmark --bench criterion_bench
 
 The charts below render `alloc` mode. For chat-realistic numbers rerun with
 `--payload touched` (fresh payloads with every byte touched); touched runs
-refresh the parallel `-touched` chart set below (throughput only — the
-latency suite always runs `alloc`).
+refresh the parallel `-touched` chart set below. (The committed `-touched`
+set is currently throughput-only: `touched` latency charts populate on the
+next full `touched` run.)
 
 ## Benchmark Results
 

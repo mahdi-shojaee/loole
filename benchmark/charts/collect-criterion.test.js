@@ -276,6 +276,25 @@ test("collect with payload=touched returns only touched cells", () => {
   assert.equal(cells[0].value, Math.round((1000 * 1e9) / 2e6));
 });
 
+test("collect with payload=touched returns touched latency cells", () => {
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
+  const write = (groupDir, funcDir, mean, whenMs) => {
+    const d = path.join(dir, groupDir, funcDir, "new");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "estimates.json"), JSON.stringify({ mean: { point_estimate: mean } }));
+    const t = new Date(whenMs);
+    fs.utimesSync(path.join(d, "estimates.json"), t, t);
+  };
+  write("latency-32-n1000-touched_spsc-s1r1", "async-async_b1_loole", 4e6, 2000);
+  write("latency-32-n1000-alloc_spsc-s1r1", "async-async_b1_loole", 9e6, 2000);
+
+  const cells = cc.collect(dir, 32, { payload: "touched" });
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].metric, "latency");
+  assert.equal(cells[0].payload, "touched");
+  assert.equal(cells[0].value, Math.round(4e6 / 1000));
+});
+
 test("readRunMarker reads the per-payload marker name", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   fs.mkdirSync(path.join(dir, "runs"), { recursive: true });

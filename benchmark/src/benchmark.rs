@@ -7,6 +7,7 @@ use crate::{
     async_channel_bench,
     bench_utils::{BenchError, Combo, LatencyProbe, LatencyResult, ThroughputRun},
     crossbeam_channel_bench, flume_bench, kanal_bench, loole_bench, tokio_bench,
+    message_type::PayloadKind,
 };
 
 /// All benchmarkable crates in their canonical (column) order.
@@ -164,17 +165,18 @@ pub fn setup_latency(
     cap: Option<usize>,
     message_size: usize,
     warmup: usize,
+    payload: PayloadKind,
 ) -> Result<LatencyProbe, BenchError> {
     match krate {
-        CrateName::Loole => loole_bench::setup_latency(rt, combo, cap, message_size, warmup),
-        CrateName::Flume => flume_bench::setup_latency(rt, combo, cap, message_size, warmup),
+        CrateName::Loole => loole_bench::setup_latency(rt, combo, cap, message_size, warmup, payload),
+        CrateName::Flume => flume_bench::setup_latency(rt, combo, cap, message_size, warmup, payload),
         CrateName::AsyncChannel => {
-            async_channel_bench::setup_latency(rt, combo, cap, message_size, warmup)
+            async_channel_bench::setup_latency(rt, combo, cap, message_size, warmup, payload)
         }
-        CrateName::Tokio => tokio_bench::setup_latency(rt, combo, cap, message_size, warmup),
-        CrateName::Kanal => kanal_bench::setup_latency(rt, combo, cap, message_size, warmup),
+        CrateName::Tokio => tokio_bench::setup_latency(rt, combo, cap, message_size, warmup, payload),
+        CrateName::Kanal => kanal_bench::setup_latency(rt, combo, cap, message_size, warmup, payload),
         CrateName::CrossbeamChannel => {
-            crossbeam_channel_bench::setup_latency(rt, combo, cap, message_size, warmup)
+            crossbeam_channel_bench::setup_latency(rt, combo, cap, message_size, warmup, payload)
         }
     }
 }
@@ -186,15 +188,16 @@ pub fn bench_latency(
     combo: Combo,
     cap: Option<usize>,
     message_size: usize,
+    payload: PayloadKind,
 ) -> Result<LatencyResult, BenchError> {
     match krate {
-        CrateName::Loole => loole_bench::bench_latency(rt, combo, cap, message_size),
-        CrateName::Flume => flume_bench::bench_latency(rt, combo, cap, message_size),
-        CrateName::AsyncChannel => async_channel_bench::bench_latency(rt, combo, cap, message_size),
-        CrateName::Tokio => tokio_bench::bench_latency(rt, combo, cap, message_size),
-        CrateName::Kanal => kanal_bench::bench_latency(rt, combo, cap, message_size),
+        CrateName::Loole => loole_bench::bench_latency(rt, combo, cap, message_size, payload),
+        CrateName::Flume => flume_bench::bench_latency(rt, combo, cap, message_size, payload),
+        CrateName::AsyncChannel => async_channel_bench::bench_latency(rt, combo, cap, message_size, payload),
+        CrateName::Tokio => tokio_bench::bench_latency(rt, combo, cap, message_size, payload),
+        CrateName::Kanal => kanal_bench::bench_latency(rt, combo, cap, message_size, payload),
         CrateName::CrossbeamChannel => {
-            crossbeam_channel_bench::bench_latency(rt, combo, cap, message_size)
+            crossbeam_channel_bench::bench_latency(rt, combo, cap, message_size, payload)
         }
     }
 }
@@ -461,7 +464,7 @@ mod tests {
             (CrateName::AsyncChannel, Combo::AsyncAsync, Some(10)),
             (CrateName::CrossbeamChannel, Combo::SyncSync, None),
         ] {
-            let mut probe = setup_latency(&rt, krate, combo, cap, 8, 100).unwrap();
+            let mut probe = setup_latency(&rt, krate, combo, cap, 8, 100, PayloadKind::Alloc).unwrap();
             let start = std::time::Instant::now();
             probe.run(&rt, 1_000);
             assert!(start.elapsed().as_nanos() > 0, "{krate} {combo:?} {cap:?}");
@@ -469,9 +472,27 @@ mod tests {
     }
 
     #[test]
+    fn latency_probe_touched_payload_measures() {
+        let rt = runtime();
+        let mut probe = setup_latency(
+            &rt,
+            CrateName::Loole,
+            Combo::SyncSync,
+            Some(10),
+            8,
+            100,
+            PayloadKind::Touched,
+        )
+        .unwrap();
+        let start = std::time::Instant::now();
+        probe.run(&rt, 1_000);
+        assert!(start.elapsed().as_nanos() > 0);
+    }
+
+    #[test]
     fn bench_latency_compat_returns_nonzero() {
         let rt = runtime();
-        let result = bench_latency(&rt, CrateName::Kanal, Combo::AsyncAsync, Some(10), 8).unwrap();
+        let result = bench_latency(&rt, CrateName::Kanal, Combo::AsyncAsync, Some(10), 8, PayloadKind::Alloc).unwrap();
         assert!(result.latency_ns > 0);
     }
 }

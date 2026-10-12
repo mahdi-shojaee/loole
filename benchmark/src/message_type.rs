@@ -7,6 +7,23 @@ impl Message {
     pub fn new(size: usize) -> Self {
         Self(vec![0; size])
     }
+
+    /// Distinct allocation with every byte filled by the deterministic
+    /// counter pattern (byte `i` holds `(i * 31) mod 256`): models real
+    /// payloads, whose bytes are all touched. Same content as the `Touched`
+    /// arm of [`AnyPayload::fresh`].
+    pub fn new_touched(size: usize) -> Self {
+        let mut v = vec![0u8; size];
+        fill_touched(&mut v);
+        Self(v)
+    }
+}
+
+/// Fill every byte with the deterministic touched-content pattern.
+fn fill_touched(v: &mut [u8]) {
+    for (i, b) in v.iter_mut().enumerate() {
+        *b = (i.wrapping_mul(31) & 0xFF) as u8;
+    }
 }
 
 impl std::fmt::Debug for Message {
@@ -90,9 +107,7 @@ impl AnyPayload {
             }
             PayloadKind::Touched => {
                 let mut v = vec![0u8; size];
-                for (i, b) in v.iter_mut().enumerate() {
-                    *b = (i.wrapping_mul(31) & 0xFF) as u8;
-                }
+                fill_touched(&mut v);
                 AnyPayload::Owned(Message(v))
             }
         }
@@ -125,6 +140,18 @@ mod tests {
         assert_eq!(PayloadKind::from_env("shared").unwrap(), PayloadKind::Shared);
         assert_eq!(PayloadKind::from_env("touched").unwrap(), PayloadKind::Touched);
         assert!(PayloadKind::from_env("banana").is_err());
+    }
+
+    #[test]
+    fn new_touched_matches_fresh_touched_content() {
+        let m = Message::new_touched(300);
+        assert_eq!(m.0.len(), 300);
+        assert_eq!((m.0[0], m.0[1], m.0[9]), (0, 31, (9 * 31 % 256) as u8));
+        let mut cache = None;
+        match AnyPayload::fresh(PayloadKind::Touched, 300, &mut cache) {
+            AnyPayload::Owned(x) => assert_eq!(x.0, m.0, "same pattern"),
+            _ => panic!("expected owned payload"),
+        }
     }
 
     #[test]
