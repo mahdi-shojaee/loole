@@ -42,9 +42,9 @@ impl std::fmt::Display for Message {
 /// behavior (a fresh zeroed `Vec` per message: measures allocator +
 /// channel). `Shared` clones one preallocated `Arc<Vec<u8>>` per send: a
 /// channel-isolation control that removes allocator traffic, not a model of
-/// real traffic. `Touched` allocates a distinct `Vec` per send and fills it
-/// with a deterministic counter pattern: models real payloads, whose bytes
-/// are all touched.
+/// real traffic. `Touched` allocates a distinct `Vec` per send holding a
+/// deterministic counter pattern (template built once per sender task,
+/// `memcpy` per send): models real payloads, whose bytes are all touched.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PayloadKind {
     Alloc,
@@ -84,9 +84,13 @@ pub enum AnyPayload {
 impl AnyPayload {
     /// Build one send unit. In `Shared` mode the allocation happens once per
     /// sender task (first call fills `cache`); every later call clones the
-    /// `Arc` (refcount bump, no 16KB traffic). In `Touched` mode every call
-    /// allocates distinctly and writes a deterministic counter pattern over
-    /// all bytes (`cache` untouched).
+    /// `Arc` (refcount bump, no 16KB traffic). In `Touched` mode the patterned
+    /// template is built once per sender task into `cache` and every call
+    /// copies it into a fresh `Vec` (`malloc` + `memcpy`, no scalar fill
+    /// loop): all messages stay distinct allocations with identical touched
+    /// bytes, and the per-message generation cost — sender-side overhead
+    /// outside the channel that dilutes the measured differences — is kept
+    /// minimal.
     pub fn fresh(
         kind: PayloadKind,
         size: usize,
@@ -106,9 +110,17 @@ impl AnyPayload {
                 AnyPayload::Shared(arc)
             }
             PayloadKind::Touched => {
-                let mut v = vec![0u8; size];
-                fill_touched(&mut v);
-                AnyPayload::Owned(Message(v))
+                let template = match cache {
+                    Some(a) if a.len() == size => a.clone(),
+                    _ => {
+                        let mut v = vec![0u8; size];
+                        fill_touched(&mut v);
+                        let a = Arc::new(v);
+                        *cache = Some(a.clone());
+                        a
+                    }
+                };
+                AnyPayload::Owned(Message(template.as_ref().clone()))
             }
         }
     }
@@ -161,8 +173,9 @@ mod tests {
         let b = AnyPayload::fresh(PayloadKind::Touched, 300, &mut cache);
         assert_eq!((a.len(), b.len()), (300, 300));
         // Deterministic counter pattern: byte i holds (i * 31) mod 256.
-        // Touched ignores the cache (every message is a distinct allocation).
-        assert!(cache.is_none());
+        // Touched builds the template once per cache, then copies it per
+        // send: every message is a distinct allocation with identical bytes.
+        assert!(cache.is_some(), "touched mode caches the template");
         match (&a, &b) {
             (AnyPayload::Owned(x), AnyPayload::Owned(y)) => {
                 assert_eq!(x.0[0], 0);
@@ -172,6 +185,34 @@ mod tests {
                 assert_ne!(x.0.as_ptr(), y.0.as_ptr(), "distinct allocations");
             }
             _ => panic!("expected owned payloads"),
+        }
+    }
+
+    #[test]
+    fn touched_payload_reuses_template_across_sizes() {
+        let mut cache = None;
+        let a = AnyPayload::fresh(PayloadKind::Touched, 300, &mut cache);
+        let template_ptr = cache.as_ref().unwrap().as_ptr();
+        // Same size reuses the template; content stays identical.
+        let b = AnyPayload::fresh(PayloadKind::Touched, 300, &mut cache);
+        assert!(std::ptr::eq(
+            cache.as_ref().unwrap().as_ptr(),
+            template_ptr
+        ));
+        match (&a, &b) {
+            (AnyPayload::Owned(x), AnyPayload::Owned(y)) => {
+                assert_eq!(x.0, y.0, "identical bytes");
+                assert_ne!(x.0.as_ptr(), y.0.as_ptr(), "distinct allocations");
+            }
+            _ => panic!("expected owned payloads"),
+        }
+        // Size change rebuilds the template instead of slicing wrongly.
+        let c = AnyPayload::fresh(PayloadKind::Touched, 16, &mut cache);
+        assert_eq!(c.len(), 16);
+        assert_eq!(cache.as_ref().unwrap().len(), 16);
+        match c {
+            AnyPayload::Owned(x) => assert_eq!(x.0[9], (9 * 31 % 256) as u8),
+            _ => panic!("expected owned payload"),
         }
     }
 

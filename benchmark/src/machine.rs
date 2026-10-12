@@ -64,6 +64,26 @@ fn cpu_model() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Toolchain this bench binary was built and run under, e.g.
+/// `rustc 1.99.0 (b940084d7 2026-09-28)`. Falls back to `"unknown"` when
+/// rustc is not on `PATH` — the descriptor must never fail a run.
+fn rustc_version() -> String {
+    std::process::Command::new("rustc")
+        .arg("-V")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn git_revision() -> (String, bool) {
     let sha = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -100,6 +120,7 @@ pub struct MachineDesc {
     pub mem_total_kb: String,
     pub git_sha: String,
     pub git_dirty: String,
+    pub rustc_version: String,
     pub extra_env: Vec<(String, String)>,
 }
 
@@ -162,6 +183,7 @@ pub fn collect(invocation: &str, payload: &str, extra_env: &[(&str, String)]) ->
         mem_total_kb,
         git_sha,
         git_dirty: dirty.to_string(),
+        rustc_version: rustc_version(),
         extra_env: extra_env
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))
@@ -201,7 +223,7 @@ pub fn write_machine_json_at(
         .collect::<Vec<_>>()
         .join(", ");
     let body = format!(
-        "{{\n  \"timestamp_ms\": \"{}\",\n  \"payload\": \"{}\",\n  \"invocation\": \"{}\",\n  \"cpu_model\": \"{}\",\n  \"cpu_count\": \"{}\",\n  \"governor\": \"{}\",\n  \"cur_freqs_khz\": [{}],\n  \"affinity\": \"{}\",\n  \"loadavg\": \"{}\",\n  \"mem_total_kb\": \"{}\",\n  \"git_sha\": \"{}\",\n  \"git_dirty\": \"{}\",\n  \"extra_env\": {{{}}}\n}}\n",
+        "{{\n  \"timestamp_ms\": \"{}\",\n  \"payload\": \"{}\",\n  \"invocation\": \"{}\",\n  \"cpu_model\": \"{}\",\n  \"cpu_count\": \"{}\",\n  \"governor\": \"{}\",\n  \"cur_freqs_khz\": [{}],\n  \"affinity\": \"{}\",\n  \"loadavg\": \"{}\",\n  \"mem_total_kb\": \"{}\",\n  \"git_sha\": \"{}\",\n  \"git_dirty\": \"{}\",\n  \"rustc_version\": \"{}\",\n  \"extra_env\": {{{}}}\n}}\n",
         esc(&desc.timestamp_ms),
         esc(&desc.payload),
         esc(&desc.invocation),
@@ -214,6 +236,7 @@ pub fn write_machine_json_at(
         esc(&desc.mem_total_kb),
         esc(&desc.git_sha),
         esc(&desc.git_dirty),
+        esc(&desc.rustc_version),
         env
     );
     let path = dir.join(filename);
@@ -253,6 +276,7 @@ mod tests {
         assert!(!d.governor.is_empty());
         assert!(!d.affinity.is_empty());
         assert!(!d.invocation.is_empty());
+        assert!(!d.rustc_version.is_empty());
         assert_eq!(d.payload, "alloc");
     }
 
@@ -266,6 +290,7 @@ mod tests {
         assert_eq!(path, dir.join("machine.json"));
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("\"payload\": \"shared\""));
+        assert!(body.contains("\"rustc_version\": \"rustc"));
         assert!(body.contains("\"BENCH_FOO\": \"bar\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
