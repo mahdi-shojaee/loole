@@ -73,6 +73,20 @@ Benchmarks measure two metrics:
 
 Measurements are driven by [Criterion.rs](https://github.com/bheisler/criterion.rs): warm-up, sampling, outlier detection, confidence intervals, and regression reports built in. For how to run the suite, configure workloads, and regenerate the charts below, see [BENCHMARK.md](BENCHMARK.md).
 
+### Environment
+
+Reference numbers were measured on Ubuntu Server 26.04.1 LTS with an Intel
+Core i7-13700K, using rustc 1.97.1:
+
+```bash
+taskset -c "0,2,4,6,8,10,12,14" cargo bench -p benchmark --bench criterion_benchmarks -- --worker-threads 8 --crates "flume async-channel tokio kanal crossbeam-channel loole" --isolate-crates --sample-size 10 --measurement-time 5 --warm-up-time 0.5 -m 256
+```
+
+The charts below render `alloc` mode. For chat-realistic numbers rerun with
+`--payload touched` (fresh payloads with every byte touched); touched runs
+refresh the parallel `-touched` chart set below (throughput only — the
+latency suite always runs `alloc`).
+
 ## Benchmark Results
 
 A separate `unbounded` chart shows the unbounded configuration.
@@ -104,6 +118,36 @@ The number of messages received per second (higher is better).
 ![SPSC: async-sync](benchmark/charts/images/spsc-async-sync-throughput-256.svg)
 ![SPSC: sync-async](benchmark/charts/images/spsc-sync-async-throughput-256.svg)
 ![SPSC: unbounded](benchmark/charts/images/spsc-unbounded-throughput-256.svg)
+
+### Throughput (touched payload)
+
+Same cells measured with `--payload touched`: each message is a distinct
+allocation with every byte filled, modeling real payloads whose bytes are
+all touched (see [BENCHMARK.md](BENCHMARK.md)). Higher is better.
+
+#### MPSC (touched)
+
+![MPSC: sync-sync (touched)](benchmark/charts/images/mpsc-sync-sync-throughput-256-touched.svg)
+![MPSC: async-async (touched)](benchmark/charts/images/mpsc-async-async-throughput-256-touched.svg)
+![MPSC: async-sync (touched)](benchmark/charts/images/mpsc-async-sync-throughput-256-touched.svg)
+![MPSC: sync-async (touched)](benchmark/charts/images/mpsc-sync-async-throughput-256-touched.svg)
+![MPSC: unbounded (touched)](benchmark/charts/images/mpsc-unbounded-throughput-256-touched.svg)
+
+#### MPMC (touched)
+
+![MPMC: sync-sync (touched)](benchmark/charts/images/mpmc-sync-sync-throughput-256-touched.svg)
+![MPMC: async-async (touched)](benchmark/charts/images/mpmc-async-async-throughput-256-touched.svg)
+![MPMC: async-sync (touched)](benchmark/charts/images/mpmc-async-sync-throughput-256-touched.svg)
+![MPMC: sync-async (touched)](benchmark/charts/images/mpmc-sync-async-throughput-256-touched.svg)
+![MPMC: unbounded (touched)](benchmark/charts/images/mpmc-unbounded-throughput-256-touched.svg)
+
+#### SPSC (touched)
+
+![SPSC: sync-sync (touched)](benchmark/charts/images/spsc-sync-sync-throughput-256-touched.svg)
+![SPSC: async-async (touched)](benchmark/charts/images/spsc-async-async-throughput-256-touched.svg)
+![SPSC: async-sync (touched)](benchmark/charts/images/spsc-async-sync-throughput-256-touched.svg)
+![SPSC: sync-async (touched)](benchmark/charts/images/spsc-sync-async-throughput-256-touched.svg)
+![SPSC: unbounded (touched)](benchmark/charts/images/spsc-unbounded-throughput-256-touched.svg)
 
 ### Latency
 

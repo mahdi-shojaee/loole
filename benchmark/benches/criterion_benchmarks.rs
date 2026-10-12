@@ -225,12 +225,13 @@ fn maybe_update_charts(
         Err(_) => return, // wrapper already validated every value
     };
     match should_update_charts(&cfg, passthrough, status.success()) {
-        Ok(()) => run_chart_update(cfg.message_size),
+        Ok(()) => run_chart_update(cfg.message_size, cfg.payload.token()),
         Err(SkipReason::MetaCommand) => {}
         Err(reason) => eprintln!(
             "charts not updated ({reason}); full runs update them automatically, \
-             or run manually:\n  cd benchmark/charts && npm run update -- {}",
-            cfg.message_size
+             or run manually:\n  cd benchmark/charts && npm run update -- {} {}",
+            cfg.message_size,
+            cfg.payload.token()
         ),
     }
 }
@@ -259,7 +260,7 @@ fn command_ok(cmd: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-fn run_chart_update(message_size: usize) {
+fn run_chart_update(message_size: usize, payload: &str) {
     let Some(charts_dir) = charts_dir() else {
         eprintln!("charts not updated: benchmark/charts not found");
         return;
@@ -268,7 +269,7 @@ fn run_chart_update(message_size: usize) {
         eprintln!("charts not updated: Node.js is required (https://nodejs.org)");
         return;
     }
-    println!("updating charts (message size {message_size})…");
+    println!("updating charts (message size {message_size}, payload {payload})…");
     if !charts_dir.join("node_modules").is_dir() {
         let status = Command::new("npm")
             .arg("install")
@@ -280,12 +281,18 @@ fn run_chart_update(message_size: usize) {
         }
     }
     let status = Command::new("npm")
-        .args(["run", "update", "--", &message_size.to_string()])
+        .args([
+            "run",
+            "update",
+            "--",
+            &message_size.to_string(),
+            payload,
+        ])
         .current_dir(&charts_dir)
         .status();
     if !matches!(status, Ok(s) if s.success()) {
         eprintln!(
-            "charts update failed; retry manually:\n  cd benchmark/charts && npm run update -- {message_size}"
+            "charts update failed; retry manually:\n  cd benchmark/charts && npm run update -- {message_size} {payload}"
         );
     }
 }

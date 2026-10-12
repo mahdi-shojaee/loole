@@ -1,8 +1,10 @@
 "use strict";
 
-// Rebuilds benchmark-result-{throughput,latency}-<size>.json from criterion's
-// output (target/criterion/**/new/estimates.json), in the exact schema the
-// existing renderer (main.js) expects.
+// Rebuilds benchmark-result-{throughput,latency}-<size>[-<payload>].json from
+// criterion's output (target/criterion/**/new/estimates.json), in the exact
+// schema the existing renderer (main.js) expects. The `alloc` set keeps the
+// historical payload-less filenames; `touched` gets a `-touched` suffix, so
+// the two modes never mix in one file.
 //
 // Benchmark IDs are self-describing (see benchmark/src/ids.rs):
 //   <metric>-<size>-n<count>-<payload>/<topology>-s<S>r<R>/<combo>/<cap>/<crate>
@@ -85,18 +87,22 @@ function cellValue(meta, meanNs) {
 
 // --- Run markers (freshness) --------------------------------------------------
 //
-// The bench binary overwrites <criterionDir>/runs/last-<size>-alloc.json at the
-// start of every run (see benchmark/src/run_marker.rs). Charts are built only
-// from estimates written after the marker's timestamp of the requested size,
-// so charts always reflect one defined run and target/criterion never needs
-// manual cleaning.
+// The bench binary overwrites <criterionDir>/runs/last-<size>-<payload>.json
+// at the start of every run (see benchmark/src/run_marker.rs). Charts are
+// built only from estimates written after the marker's timestamp of the
+// requested size and payload, so charts always reflect one defined run and
+// target/criterion never needs manual cleaning.
 
 const RUNS_DIR = "runs";
 
+// Payload modes with a chart set (mirrors chart_update::should_update_charts:
+// shared is a control, not a workload model, and has no charts).
+const CHARTED_PAYLOADS = ["alloc", "touched"];
+
 // Returns the parsed marker { started_at, ... } or null when absent/invalid.
-function readRunMarker(criterionDir, size) {
+function readRunMarker(criterionDir, size, payload = "alloc") {
   try {
-    const raw = fs.readFileSync(path.join(criterionDir, RUNS_DIR, `last-${size}-alloc.json`), "utf8");
+    const raw = fs.readFileSync(path.join(criterionDir, RUNS_DIR, `last-${size}-${payload}.json`), "utf8");
     const marker = JSON.parse(raw);
     return typeof marker.started_at === "number" ? marker : null;
   } catch {
@@ -135,11 +141,13 @@ function markerCoverageProblem(marker) {
 // --- Scanning ---------------------------------------------------------------
 
 // Reads <criterionDir>/<group>/<func>/new/estimates.json for benches of
-// `size`. Returns one cell per (metric, topology, combo, cap, crate) using
-// the deepest workload, tie-broken by latest run. If opts.minMtimeMs is set,
-// estimates older than that (ms epoch) are treated as stale and skipped.
+// `size` and `opts.payload` (default "alloc"). Returns one cell per (metric,
+// topology, combo, cap, crate) using the deepest workload, tie-broken by
+// latest run. If opts.minMtimeMs is set, estimates older than that (ms epoch)
+// are treated as stale and skipped.
 function collect(criterionDir, size, opts = {}) {
   const minMtime = opts.minMtimeMs ?? 0;
+  const wantedPayload = opts.payload ?? "alloc";
   const cells = new Map();
   if (!fs.existsSync(criterionDir)) return [];
   for (const groupDir of fs.readdirSync(criterionDir)) {
@@ -159,7 +167,7 @@ function collect(criterionDir, size, opts = {}) {
       if (mtime < minMtime) continue; // written before the latest run's start
       const meta = parseId(groupDir, funcDir);
       if (!meta || meta.size !== size) continue;
-      if (meta.payload !== "alloc") continue; // charts render alloc mode only
+      if (meta.payload !== wantedPayload) continue; // one chart set per payload mode
       const key = [
         meta.metric,
         meta.topology.name,
@@ -255,47 +263,56 @@ function buildData(metric, cells) {
 
 function main() {
   const size = Number(process.argv[2] || process.env.MESSAGE_SIZE || "256");
+  const payload = process.argv[3] || process.env.PAYLOAD || "alloc";
+  if (!CHARTED_PAYLOADS.includes(payload)) {
+    console.error(
+      `payload "${payload}" has no chart set (charts render ${CHARTED_PAYLOADS.join(" and ")} modes); ` +
+        "re-run with --payload alloc or --payload touched"
+    );
+    process.exit(1);
+  }
+  const suffix = payload === "alloc" ? "" : `-${payload}`;
   const criterionDir =
     process.env.CRITERION_DIR ||
     process.env.CRITERION_HOME ||
     path.resolve(__dirname, "..", "..", "target", "criterion");
-  const marker = readRunMarker(criterionDir, size);
+  const marker = readRunMarker(criterionDir, size, payload);
   if (!marker) {
     console.error(
-      `no recorded benchmark run for message size ${size} under ${criterionDir}\n` +
+      `no recorded ${payload} benchmark run for message size ${size} under ${criterionDir}\n` +
         "run the suite first:\n" +
-        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size}`
+        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size} --payload ${payload}`
     );
     process.exit(1);
   }
   const coverage = markerCoverageProblem(marker);
   if (coverage) {
     console.error(
-      `the latest size-${size} run was a partial run (${coverage}); ` +
+      `the latest size-${size} ${payload} run was a partial run (${coverage}); ` +
         "charts are only rebuilt from full-matrix runs. Re-run the full suite first:\n" +
-        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size}`
+        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size} --payload ${payload}`
     );
     process.exit(1);
   }
-  const cells = collect(criterionDir, size, { minMtimeMs: marker.started_at });
+  const cells = collect(criterionDir, size, { minMtimeMs: marker.started_at, payload });
   if (cells.length === 0) {
     console.error(
-      `the latest size-${size} run (started ${new Date(marker.started_at).toISOString()}) ` +
+      `the latest size-${size} ${payload} run (started ${new Date(marker.started_at).toISOString()}) ` +
         "produced no matching results — re-run the bench suite:\n" +
-        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size}`
+        `  cargo bench -p benchmark --bench criterion_benchmarks -- -m ${size} --payload ${payload}`
     );
     process.exit(1);
   }
   console.log(
-    `using ${cells.length} cells from the run started ${new Date(marker.started_at).toISOString()}`
+    `using ${cells.length} ${payload} cells from the run started ${new Date(marker.started_at).toISOString()}`
   );
   for (const metric of ["throughput", "latency"]) {
     if (!cells.some((c) => c.metric === metric)) {
-      console.log(`no ${metric} results for ${size} bytes; not writing ${metric} JSON`);
+      console.log(`no ${metric} results for ${size} bytes (${payload}); not writing ${metric} JSON`);
       continue;
     }
     const data = buildData(metric, cells);
-    const out = path.join(__dirname, `benchmark-result-${metric}-${size}.json`);
+    const out = path.join(__dirname, `benchmark-result-${metric}-${size}${suffix}.json`);
     fs.writeFileSync(out, JSON.stringify(data, null, 2) + "\n");
     console.log(`wrote ${path.basename(out)} (${cells.filter((c) => c.metric === metric).length} cells)`);
   }

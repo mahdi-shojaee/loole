@@ -24,8 +24,9 @@ pub enum SkipReason {
     /// The run covers only part of the matrix (metric filter, crate subset,
     /// or a positional criterion filter).
     PartialRun,
-    /// Shared-payload run; charts render alloc mode only.
-    NonAllocPayload,
+    /// Payload mode with no chart set (shared); charts render alloc and
+    /// touched modes as parallel per-payload outputs.
+    UnchartedPayload,
 }
 
 impl Display for SkipReason {
@@ -35,10 +36,10 @@ impl Display for SkipReason {
             SkipReason::Disabled => write!(f, "disabled via --no-charts"),
             SkipReason::MetaCommand => write!(f, "no benchmarks ran"),
             SkipReason::PartialRun => write!(f, "partial run"),
-            SkipReason::NonAllocPayload => {
+            SkipReason::UnchartedPayload => {
                 write!(
                     f,
-                    "payload mode is not alloc (charts render alloc mode only)"
+                    "payload mode is not charted (charts render alloc and touched modes)"
                 )
             }
         }
@@ -107,8 +108,8 @@ pub fn should_update_charts(
     if is_meta_run(passthrough) {
         return Err(SkipReason::MetaCommand);
     }
-    if cfg.payload != PayloadKind::Alloc {
-        return Err(SkipReason::NonAllocPayload);
+    if !matches!(cfg.payload, PayloadKind::Alloc | PayloadKind::Touched) {
+        return Err(SkipReason::UnchartedPayload);
     }
     if !cfg.metric.includes_throughput()
         || !cfg.metric.includes_latency()
@@ -166,8 +167,17 @@ mod tests {
         };
         assert!(matches!(
             should_update_charts(&cfg, &[], true),
-            Err(SkipReason::NonAllocPayload)
+            Err(SkipReason::UnchartedPayload)
         ));
+    }
+
+    #[test]
+    fn touched_payload_updates_charts() {
+        let cfg = Config {
+            payload: PayloadKind::Touched,
+            ..Config::default()
+        };
+        assert_eq!(should_update_charts(&cfg, &[], true), Ok(()));
     }
 
     #[test]

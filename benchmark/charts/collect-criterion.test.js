@@ -238,7 +238,7 @@ test("collect keeps only the deepest workload (-n) per metric+size", () => {
 // Run markers (freshness): runs/last-<size>-alloc.json
 // ---------------------------------------------------------------------------
 
-test("collect ignores shared-mode estimates (charts render alloc mode only)", () => {
+test("collect defaults to alloc and ignores other payload modes", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   const write = (groupDir, funcDir, mean, whenMs) => {
     const d = path.join(dir, groupDir, funcDir, "new");
@@ -248,6 +248,7 @@ test("collect ignores shared-mode estimates (charts render alloc mode only)", ()
     fs.utimesSync(path.join(d, "estimates.json"), t, t);
   };
   write("throughput-32-n1000-shared_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
   write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_flume", 1e6, 2000);
 
   const cells = cc.collect(dir, 32);
@@ -256,15 +257,39 @@ test("collect ignores shared-mode estimates (charts render alloc mode only)", ()
   assert.equal(cells[0].payload, "alloc");
 });
 
-test("readRunMarker parses a marker file", () => {
+test("collect with payload=touched returns only touched cells", () => {
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
+  const write = (groupDir, funcDir, mean, whenMs) => {
+    const d = path.join(dir, groupDir, funcDir, "new");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "estimates.json"), JSON.stringify({ mean: { point_estimate: mean } }));
+    const t = new Date(whenMs);
+    fs.utimesSync(path.join(d, "estimates.json"), t, t);
+  };
+  write("throughput-32-n1000-alloc_spsc-s1r1", "sync-sync_b0_loole", 1e6, 2000);
+  write("throughput-32-n1000-touched_spsc-s1r1", "sync-sync_b0_flume", 2e6, 2000);
+
+  const cells = cc.collect(dir, 32, { payload: "touched" });
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].crate, "flume");
+  assert.equal(cells[0].payload, "touched");
+  assert.equal(cells[0].value, Math.round((1000 * 1e9) / 2e6));
+});
+
+test("readRunMarker reads the per-payload marker name", () => {
   const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "crit-"));
   fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
   fs.writeFileSync(
     path.join(dir, "runs", "last-32-alloc.json"),
     JSON.stringify({ started_at: 1_700_000_000_000, message_size: 32 }) + "\n"
   );
-  const marker = cc.readRunMarker(dir, 32);
-  assert.equal(marker.started_at, 1_700_000_000_000);
+  fs.writeFileSync(
+    path.join(dir, "runs", "last-32-touched.json"),
+    JSON.stringify({ started_at: 1_700_000_000_001, message_size: 32 }) + "\n"
+  );
+  // Each payload reads only its own marker — no cross-talk.
+  assert.equal(cc.readRunMarker(dir, 32).started_at, 1_700_000_000_000);
+  assert.equal(cc.readRunMarker(dir, 32, "touched").started_at, 1_700_000_000_001);
 });
 
 test("readRunMarker returns null when missing or invalid", () => {

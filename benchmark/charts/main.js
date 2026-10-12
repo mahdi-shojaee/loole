@@ -10,6 +10,11 @@ global.navigator.language = window.navigator.language;
 const echarts = require("echarts");
 
 const messageSize = process.argv[2] || "256";
+const payload = process.argv[3] || "alloc";
+// The `alloc` set keeps the historical payload-less filenames; `touched`
+// gets a `-touched` suffix, mirroring collect-criterion.js.
+const suffix = payload === "alloc" ? "" : `-${payload}`;
+const titlePayload = payload === "alloc" ? "" : ` (${payload})`;
 
 // Same palette as the branch-compare dashboard (build.mjs CRATE_COLORS) so
 // crates are identifiable across both tools. loole keeps its filled default.
@@ -68,7 +73,7 @@ function renderChart(data, chanType, benchType, metric) {
   const option = {
     animation: false,
     title: {
-      text: `${def.title} - ${metric} - ${messageSize} bytes`,
+      text: `${def.title} - ${metric} - ${messageSize} bytes${titlePayload}`,
       textStyle: {
         fontSize: 14,
       },
@@ -109,13 +114,13 @@ function renderChart(data, chanType, benchType, metric) {
   chart.setOption(option);
   const svgStr = chart.renderToSVGString();
   chart.dispose();
-  fs.writeFileSync(`images/${chanType}-${benchType}-${metric}-${messageSize}.svg`, svgStr);
+  fs.writeFileSync(`images/${chanType}-${benchType}-${metric}-${messageSize}${suffix}.svg`, svgStr);
 }
 
 function renderMetric(metric) {
-  const jsonPath = `./benchmark-result-${metric}-${messageSize}.json`;
+  const jsonPath = `./benchmark-result-${metric}-${messageSize}${suffix}.json`;
   if (!fs.existsSync(jsonPath)) {
-    console.log(`no ${metric} results for ${messageSize} bytes; skipping ${metric} charts`);
+    console.log(`no ${metric} results for ${messageSize} bytes (${payload}); skipping ${metric} charts`);
     return;
   }
   const data = require(jsonPath);
