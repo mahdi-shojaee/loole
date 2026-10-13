@@ -141,7 +141,7 @@ function renderDist() {
       const def = data[topo][combo];
       renderChart(data, topo, combo, "latency", {
         out: `images/${topo}-${combo}-latency-dist-${messageSize}.svg`,
-        title: `${def.title} (${combo}) - per-message latency distribution - ${messageSize} bytes (touched)`,
+        title: `unbounded: ${def.title} - per-message latency distribution - ${messageSize} bytes`,
         firstCol: "quantile",
       });
     }

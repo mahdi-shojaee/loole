@@ -1,7 +1,7 @@
 {
   "spsc": {
     "sync-sync": {
-      "title": "1 sender / 1 receiver (sync-sync)",
+      "title": "1 sync sender / 1 sync receiver",
       "dataset": {
         "source": [
           [
@@ -62,7 +62,7 @@
       }
     },
     "async-async": {
-      "title": "1 sender / 1 receiver (async-async)",
+      "title": "1 async sender / 1 async receiver",
       "dataset": {
         "source": [
           [
@@ -123,7 +123,7 @@
       }
     },
     "async-sync": {
-      "title": "1 sender / 1 receiver (async-sync)",
+      "title": "1 async sender / 1 sync receiver",
       "dataset": {
         "source": [
           [
@@ -184,7 +184,7 @@
       }
     },
     "sync-async": {
-      "title": "1 sender / 1 receiver (sync-async)",
+      "title": "1 sync sender / 1 async receiver",
       "dataset": {
         "source": [
           [
@@ -247,7 +247,7 @@
   },
   "mpsc": {
     "sync-sync": {
-      "title": "1000 senders / 1 receiver (sync-sync)",
+      "title": "1000 sync senders / 1 sync receiver",
       "dataset": {
         "source": [
           [
@@ -308,7 +308,7 @@
       }
     },
     "async-async": {
-      "title": "1000 senders / 1 receiver (async-async)",
+      "title": "1000 async senders / 1 async receiver",
       "dataset": {
         "source": [
           [
@@ -369,7 +369,7 @@
       }
     },
     "async-sync": {
-      "title": "1000 senders / 1 receiver (async-sync)",
+      "title": "1000 async senders / 1 sync receiver",
       "dataset": {
         "source": [
           [
@@ -430,7 +430,7 @@
       }
     },
     "sync-async": {
-      "title": "1000 senders / 1 receiver (sync-async)",
+      "title": "1000 sync senders / 1 async receiver",
       "dataset": {
         "source": [
           [
@@ -493,7 +493,7 @@
   },
   "mpmc": {
     "sync-sync": {
-      "title": "1000 senders / 10 receivers (sync-sync)",
+      "title": "1000 sync senders / 10 sync receivers",
       "dataset": {
         "source": [
           [
@@ -548,7 +548,7 @@
       }
     },
     "async-async": {
-      "title": "1000 senders / 10 receivers (async-async)",
+      "title": "1000 async senders / 10 async receivers",
       "dataset": {
         "source": [
           [
@@ -603,7 +603,7 @@
       }
     },
     "async-sync": {
-      "title": "1000 senders / 10 receivers (async-sync)",
+      "title": "1000 async senders / 10 sync receivers",
       "dataset": {
         "source": [
           [
@@ -658,7 +658,7 @@
       }
     },
     "sync-async": {
-      "title": "1000 senders / 10 receivers (sync-async)",
+      "title": "1000 sync senders / 10 async receivers",
       "dataset": {
         "source": [
           [

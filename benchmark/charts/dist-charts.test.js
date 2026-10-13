@@ -120,6 +120,8 @@ describe("dist-charts", () => {
     ];
     const data = dc.buildDistData(cells);
     assert.deepEqual(Object.keys(data), ["spsc"]);
+    // Title vocabulary matches the estimate charts (flavors inline).
+    assert.equal(data.spsc["sync-sync"].title, "1 sync sender / 1 sync receiver");
     const ds = data.spsc["sync-sync"].dataset.source;
     assert.deepEqual(ds[0], ["quantile", "loole", "flume"]);
     // Rows are the five quantiles in order; bounded cells never leak in.

@@ -52,8 +52,8 @@
 <path d="M3.5 0L21.5 0A3.5 3.5 0 0 1 25 3.5L25 10.5A3.5 3.5 0 0 1 21.5 14L3.5 14A3.5 3.5 0 0 1 0 10.5L0 3.5A3.5 3.5 0 0 1 3.5 0Z" transform="translate(461.8 170.5)" fill="rgb(167,139,250)" fill-opacity="0.5" ecmeta_series_index="3" ecmeta_data_index="3" ecmeta_ssr_type="legend" ecmeta_silent="true" class="zr31-cls-220"></path>
 <text dominant-baseline="central" text-anchor="start" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" x="30" y="7" transform="translate(461.8 170.5)" fill="#54555a">kanal (std-mutex)</text>
 <path d="M0 0l122.9 0l0 14l-122.9 0Z" transform="translate(461.8 170.5)" fill="none" pointer-events="visible" ecmeta_series_index="3" ecmeta_data_index="3" ecmeta_ssr_type="legend" class="zr31-cls-225"></path>
-<path d="M-5 -5l701.5 0l0 24l-701.5 0Z" transform="translate(37 13)" fill="rgb(0,0,0)" fill-opacity="0" stroke="#3c3c41" stroke-width="0" class="zr31-cls-220"></path>
-<text dominant-baseline="central" text-anchor="start" style="font-size:14px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="7" transform="translate(37 13)" fill="#3c3c41">1000 senders / 10 receivers (sync-async) (sync-async) - per-message latency distribution - 256 bytes (touched)</text>
+<path d="M-5 -5l623.3 0l0 24l-623.3 0Z" transform="translate(37 13)" fill="rgb(0,0,0)" fill-opacity="0" stroke="#3c3c41" stroke-width="0" class="zr31-cls-220"></path>
+<text dominant-baseline="central" text-anchor="start" style="font-size:14px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="7" transform="translate(37 13)" fill="#3c3c41">unbounded: 1000 sync senders / 10 async receivers - per-message latency distribution - 256 bytes</text>
 <style ><![CDATA[
 .zr31-cls-220:hover {
 pointer-events:none;

@@ -16,6 +16,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const cc = require("./collect-criterion.js");
+const { formatTitle, COMBO_FLAVORS } = cc;
 
 // Canonical crate columns (same order as the estimate charts).
 const CRATE_ORDER = [
@@ -145,13 +146,13 @@ function buildDistData(cells) {
     if (topoCells.length === 0) continue;
     const crates = CRATE_ORDER.filter((c) => topoCells.some((cell) => cell.crate === c));
     const sample = topoCells[0];
-    const scope = `${sample.senders} sender${sample.senders !== 1 ? "s" : ""} / ${
-      sample.receivers
-    } receiver${sample.receivers !== 1 ? "s" : ""}`;
     data[topo] = {};
     for (const combo of COMBOS) {
+      // Same title vocabulary as the estimate charts (flavors inline, no
+      // payload suffix: touched is the default and only charted mode).
+      const [sf, rf] = COMBO_FLAVORS[combo];
       data[topo][combo] = {
-        title: `${scope} (${combo})`,
+        title: formatTitle(sample.senders, sample.receivers, sf, rf),
         dataset: { source: distDataset(topoCells, combo, crates) },
       };
     }

@@ -321,4 +321,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseId, cellValue, collect, readRunMarker, markerCoverageProblem, buildData, main };
+module.exports = { parseId, cellValue, collect, readRunMarker, markerCoverageProblem, buildData, formatTitle, COMBO_FLAVORS, main };
