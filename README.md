@@ -89,11 +89,31 @@ bytes are all touched (see [BENCHMARK.md](BENCHMARK.md)).
 
 ## Benchmark Results
 
-Results live in two files (kept separate so the package front page stays lean):
+Results live in two files:
 
 - [Throughput](THROUGHPUT-RESULTS.md) — messages/s per topology and combo.
 - [Latency](LATENCY-RESULTS.md) — SPSC ping-pong round trips plus per-message
   queueing-delay distributions under load.
+
+### Highlights
+
+Flagship async shapes (full galleries in the files above):
+
+#### Throughput
+
+![SPSC async-async throughput](benchmark/charts/images/spsc-async-async-throughput-256.svg)
+![MPSC async-async throughput](benchmark/charts/images/mpsc-async-async-throughput-256.svg)
+![MPMC async-async throughput](benchmark/charts/images/mpmc-async-async-throughput-256.svg)
+
+[Full throughput charts →](THROUGHPUT-RESULTS.md)
+
+#### Latency
+
+![SPSC async-async distribution](benchmark/charts/images/spsc-async-async-latency-dist-256.svg)
+![MPSC async-async distribution](benchmark/charts/images/mpsc-async-async-latency-dist-256.svg)
+![MPMC async-async distribution](benchmark/charts/images/mpmc-async-async-latency-dist-256.svg)
+
+[Full latency charts →](LATENCY-RESULTS.md)
 
 ## License
 
