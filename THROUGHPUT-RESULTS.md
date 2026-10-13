@@ -5,7 +5,7 @@ default `touched` payload: each message is a distinct allocation with every
 byte filled. A separate `unbounded` chart shows the unbounded configuration.
 Methodology and environment: [BENCHMARK.md](BENCHMARK.md).
 
-### Throughput
+## Throughput
 
 The number of messages received per second (higher is better).
 
