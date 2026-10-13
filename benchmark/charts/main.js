@@ -40,6 +40,26 @@ echarts.setPlatformAPI({
   createCanvas() {},
 });
 
+// Grid geometry shared by every chart. The left margin is fixed (110px,
+// auto-contain off) so the y-axis name sits at the same x in every chart
+// regardless of tick-label widths — queueing-tail ticks run an order of
+// magnitude wider than ping-pong ticks. Clipping is impossible in practice:
+// it would need ~15-digit tick labels (≥ 1e14 msgs/s, or multi-day
+// latencies in nanoseconds).
+function chartGrid() {
+  return {
+    left: 110,
+    right: "4%",
+    // 28% leaves the x tick labels clear of the bottom legend now that
+    // containLabel no longer auto-expands the margin (200px canvas:
+    // axis at y=144, labels end ~158, legend starts ~165).
+    bottom: "28%",
+    // Room for the title row plus the y-axis name beneath it.
+    top: 60,
+    containLabel: false,
+  };
+}
+
 function renderChart(data, chanType, benchType, metric, opts = {}) {
   const def = data[chanType][benchType];
   const source = def.dataset.source;
@@ -86,14 +106,7 @@ function renderChart(data, chanType, benchType, metric, opts = {}) {
         name === "loole" ? name : { name, itemStyle: crateItemStyle(name) }
       ),
     },
-    grid: {
-      left: "4%",
-      right: "4%",
-      bottom: "20%",
-      // Room for the title row plus the y-axis name beneath it.
-      top: 60,
-      containLabel: true,
-    },
+    grid: chartGrid(),
     tooltip: {},
     dataset: { source: filteredSource },
     xAxis: { type: "category" },
