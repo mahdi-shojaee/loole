@@ -17,7 +17,28 @@ Latency is the round-trip time in nanoseconds (lower is better) for a single sen
 
 ## Per-message latency distribution
 
+Per-message queueing delay under full load, unbounded cells only (where tails
+grow unmasked). Rows are percentiles (ns, lower is better); bars are crates.
 Each throughput run records a `target/criterion/runs/latency-dist-*.json`
-sidecar with percentile tables (p10/p50/p95/p99/p99.9) per cell; the charts
-below render from the newest full-run sidecar (see [Sampling](BENCHMARK.md#sampling)).
-They populate on the next full run with the current harness.
+sidecar with these tables; see [Sampling](BENCHMARK.md#sampling).
+
+#### SPSC
+
+![SPSC: sync-sync distribution](benchmark/charts/images/spsc-sync-sync-latency-dist-256.svg)
+![SPSC: async-async distribution](benchmark/charts/images/spsc-async-async-latency-dist-256.svg)
+![SPSC: async-sync distribution](benchmark/charts/images/spsc-async-sync-latency-dist-256.svg)
+![SPSC: sync-async distribution](benchmark/charts/images/spsc-sync-async-latency-dist-256.svg)
+
+#### MPSC
+
+![MPSC: sync-sync distribution](benchmark/charts/images/mpsc-sync-sync-latency-dist-256.svg)
+![MPSC: async-async distribution](benchmark/charts/images/mpsc-async-async-latency-dist-256.svg)
+![MPSC: async-sync distribution](benchmark/charts/images/mpsc-async-sync-latency-dist-256.svg)
+![MPSC: sync-async distribution](benchmark/charts/images/mpsc-sync-async-latency-dist-256.svg)
+
+#### MPMC
+
+![MPMC: sync-sync distribution](benchmark/charts/images/mpmc-sync-sync-latency-dist-256.svg)
+![MPMC: async-async distribution](benchmark/charts/images/mpmc-async-async-latency-dist-256.svg)
+![MPMC: async-sync distribution](benchmark/charts/images/mpmc-async-sync-latency-dist-256.svg)
+![MPMC: sync-async distribution](benchmark/charts/images/mpmc-sync-async-latency-dist-256.svg)

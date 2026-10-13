@@ -73,10 +73,43 @@ describe("dist-charts", () => {
         }
       }
     }
-    assert.equal(dc.distCoverageProblem(full), null);
+    assert.equal(dc.distCoverageProblem(full, full), null);
 
     const missing = full.filter((c) => !(c.topology === "mpsc" && c.crate === "flume"));
-    assert.match(dc.distCoverageProblem(missing), /mpsc/);
+    assert.match(dc.distCoverageProblem(missing, full), /mpsc/);
+  });
+
+  test("distCoverageProblem follows estimates, not a hardcoded crate list", () => {
+    // Regression test: crossbeam is sync-sync only and tokio has no mpmc,
+    // so the estimates never contain those cells — their absence in dist
+    // data must not read as missing. specified via estimate-shaped cells
+    // (topology object, as collect-criterion.js yields).
+    const est = (topo, combo, crate) => ({
+      topology: { name: topo, senders: 1, receivers: 1 },
+      combo,
+      cap: "unbounded",
+      crate,
+    });
+    const expected = [
+      est("spsc", "sync-sync", "loole"),
+      est("spsc", "sync-sync", "crossbeam-channel"),
+      est("spsc", "async-async", "loole"),
+      est("mpsc", "sync-sync", "tokio"),
+    ];
+    const dist = [
+      cell("spsc", "sync-sync", "unbounded", "loole", 400),
+      cell("spsc", "sync-sync", "unbounded", "crossbeam-channel", 450),
+      cell("spsc", "async-async", "unbounded", "loole", 400),
+      cell("mpsc", "sync-sync", "unbounded", "tokio", 400),
+    ];
+    assert.equal(dc.distCoverageProblem(dist, expected), null);
+
+    const partial = dist.filter((c) => c.crate !== "tokio");
+    assert.match(dc.distCoverageProblem(partial, expected), /tokio/);
+  });
+
+  test("distCoverageProblem refuses empty expectations", () => {
+    assert.match(dc.distCoverageProblem([], []), /no estimate cells/);
   });
 
   test("buildDistData shapes quantile rows per topology and combo", () => {
@@ -96,5 +129,15 @@ describe("dist-charts", () => {
     );
     assert.deepEqual(ds[1], ["p10", 100, 100]);
     assert.deepEqual(ds[4], ["p99", 400, 450]);
+  });
+
+  test("collectDist honors minMtimeMs like the estimate collector", () => {
+    const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "dist-"));
+    writeSidecar(dir, "latency-dist-32-touched-1-111.json", [cell("spsc", "sync-sync", "unbounded", "loole", 400)], 1000);
+    writeSidecar(dir, "latency-dist-32-touched-2-222.json", [cell("spsc", "sync-sync", "unbounded", "loole", 450)], 2000);
+
+    const fresh = dc.collectDist(dir, 32, "touched", { minMtimeMs: 1500 });
+    assert.equal(fresh.cells.length, 1);
+    assert.equal(fresh.cells[0].p99, 450);
   });
 });

@@ -11,9 +11,19 @@ const { execFileSync } = require("node:child_process");
 const size = process.argv[2];
 const payload = process.argv[3] || "touched";
 
-for (const script of ["collect-criterion.js", "dist-charts.js", "main.js"]) {
+function run(script) {
   const args = ["--no-warnings", script];
   if (size) args.push(size);
   if (payload) args.push(payload);
   execFileSync(process.execPath, args, { stdio: "inherit", cwd: __dirname });
 }
+
+run("collect-criterion.js");
+// The dist charts are additive: their failure (e.g. no full-run sidecar
+// yet) warns loudly but never blocks the estimate charts or their rendering.
+try {
+  run("dist-charts.js");
+} catch (err) {
+  console.error(`warning: dist charts skipped (${String(err.message || err).split("\n")[0]})`);
+}
+run("main.js");
