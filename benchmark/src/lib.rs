@@ -8,6 +8,7 @@ pub mod bench_utils;
 pub mod benchmark;
 pub mod chart_update;
 pub mod config;
+pub mod dist_sidecar;
 pub mod ids;
 pub mod machine;
 pub mod message_type;

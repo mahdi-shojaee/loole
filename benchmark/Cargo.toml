@@ -10,6 +10,7 @@ flume = "0.12.0"
 kanal = { version = "0.1.1", features = ["std-mutex"] }
 crossbeam-channel = "0.5.16"
 tokio = { version = "1.53.1", features = ["full"] }
+hdrhistogram = { version = "7.6.0", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }

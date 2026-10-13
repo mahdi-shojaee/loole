@@ -358,7 +358,7 @@ mod tests {
             PayloadKind::Touched,
         )
         .unwrap();
-        let (sent, received) = rt.block_on(run.join_all());
+        let (sent, received, _dist) = rt.block_on(run.join_all());
         assert_eq!(sent, 1_000);
         assert_eq!(received, 1_000);
     }
@@ -378,7 +378,7 @@ mod tests {
             PayloadKind::Touched,
         )
         .unwrap();
-        let (sent, received) = rt.block_on(run.join_all());
+        let (sent, received, _dist) = rt.block_on(run.join_all());
         assert_eq!(sent, 1_000);
         assert_eq!(received, 1_000);
     }
@@ -388,7 +388,7 @@ mod tests {
         let rt = runtime();
         for combo in [Combo::AsyncSync, Combo::SyncAsync] {
             let run = setup_throughput(&rt, CrateName::Kanal, combo, 2, 2, None, 500, 8, PayloadKind::Touched).unwrap();
-            let (sent, received) = rt.block_on(run.join_all());
+            let (sent, received, _dist) = rt.block_on(run.join_all());
             assert_eq!((sent, received), (500, 500), "{combo:?}");
         }
     }
@@ -445,7 +445,7 @@ mod tests {
             PayloadKind::Shared,
         )
         .unwrap();
-        let (sent, received) = rt.block_on(run.join_all());
+        let (sent, received, _dist) = rt.block_on(run.join_all());
         assert_eq!((sent, received), (500, 500));
     }
 

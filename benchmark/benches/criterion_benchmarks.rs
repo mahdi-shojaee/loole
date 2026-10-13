@@ -28,12 +28,15 @@ use benchmark::config::{
     isolate_envs, sampling_overrides_from, split_args, Config, SamplingOverrides, BOOL_FLAGS,
     CHILD_ENV, PARAMS,
 };
+use benchmark::dist_sidecar::{dist_filename, write_dist_sidecar_at, CellDist};
 use benchmark::ids::{
-    bench_id, group_id, topology_token, MetricKind, Topology, CAPACITIES, COMBOS,
+    bench_id, capacity_token, combo_token, crate_token, group_id, topology_name, topology_token,
+    MetricKind, Topology, CAPACITIES, COMBOS,
 };
-use benchmark::message_type::PayloadKind;
+use benchmark::message_type::{DistCtx, PayloadKind};
 
 use criterion::{BatchSize, Criterion, Throughput};
+use hdrhistogram::Histogram;
 use tokio::runtime::Runtime;
 
 /// Criterion's minimum is 10 as well; each iteration already transfers the
@@ -75,8 +78,9 @@ fn main() {
     }
     // Child process: criterion sees only its own args.
     let mut criterion = Criterion::default().configure_from_args();
-    criterion_benchmarks(&mut criterion);
+    let (dists, cfg) = criterion_benchmarks(&mut criterion);
     criterion.final_summary();
+    write_dist_sidecar(&cfg, &dists);
 }
 
 fn wrapper_main() -> ! {
@@ -179,6 +183,39 @@ fn write_machine_sidecar(cfg: &Config, env_pairs: &[(&'static str, String)]) {
         benchmark::machine::machine_filename(cfg.message_size, cfg.payload.token(), &desc.timestamp_ms);
     if let Err(err) = benchmark::machine::write_machine_json_at(&runs_dir, &filename, &desc) {
         eprintln!("warning: {filename} not written ({err})");
+    }
+}
+
+/// Writes the per-run latency-distribution sidecar into the `runs/` dir next
+/// to the run markers. Runs that recorded no samples (meta invocations,
+/// shared mode) leave nothing behind; auditing must never fail a run, so
+/// resolution/write errors only warn on stderr.
+fn write_dist_sidecar(cfg: &Config, dists: &[CellDist]) {
+    let total: u64 = dists.iter().map(|c| c.hist.len()).sum();
+    let recorded = dists.iter().filter(|c| c.hist.len() > 0).count();
+    if total == 0 {
+        return;
+    }
+    let runs_dir = match benchmark::run_marker::criterion_dir() {
+        Ok(dir) => dir.join("runs"),
+        Err(err) => {
+            eprintln!("warning: dist sidecar not written (criterion dir unresolved: {err})");
+            return;
+        }
+    };
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let filename = dist_filename(cfg.message_size, cfg.payload.token(), &timestamp_ms);
+    match write_dist_sidecar_at(&runs_dir, &filename, &timestamp_ms, cfg.message_size, cfg.payload.token(), dists) {
+        Ok(path) => println!(
+            "latency-dist sidecar: {} ({} cells, {} samples; query with e.g. jq '.cells[] | select(.topology==\"spsc\")')",
+            path.display(),
+            recorded,
+            total,
+        ),
+        Err(err) => eprintln!("warning: {filename} not written ({err})"),
     }
 }
 
@@ -301,7 +338,7 @@ fn run_chart_update(message_size: usize, payload: &str) {
 // Benchmark registration
 // ---------------------------------------------------------------------------
 
-fn criterion_benchmarks(c: &mut Criterion) {
+fn criterion_benchmarks(c: &mut Criterion) -> (Vec<CellDist>, Config) {
     let cfg = Config::from_env().unwrap_or_else(|err| {
         eprintln!("error: {err}");
         exit(2);
@@ -331,8 +368,12 @@ fn criterion_benchmarks(c: &mut Criterion) {
         }
     }
     let ran_throughput = cfg.metric.includes_throughput();
+    // Per-cell latency distributions, drained into the dist sidecar after
+    // the run (see write_dist_sidecar). Stays empty for meta invocations
+    // and partial runs that measure nothing.
+    let mut dists = Vec::new();
     if ran_throughput {
-        throughput_groups(c, &cfg, overrides);
+        throughput_groups(c, &cfg, overrides, &mut dists);
     }
     if cfg.metric.includes_latency() {
         // Cool down between the throughput and latency suites when asked:
@@ -343,6 +384,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
         }
         latency_group(c, &cfg, overrides);
     }
+    (dists, cfg)
 }
 
 /// Idles `cfg.cooldown_secs` between benchmark groups so the machine cools
@@ -382,13 +424,21 @@ fn topologies(cfg: &Config) -> [(Topology, usize, usize); 3] {
     ]
 }
 
-fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrides) {
+fn throughput_groups(
+    c: &mut Criterion,
+    cfg: &Config,
+    overrides: SamplingOverrides,
+    dists: &mut Vec<CellDist>,
+) {
     let gid = group_id(
         MetricKind::Throughput,
         cfg.message_size,
         cfg.messages_no,
         cfg.payload,
     );
+    // One sampling stride per cell (derived from the message count, so every
+    // run records the same tail budget at any scale).
+    let sample_every = DistCtx::new(cfg.messages_no).sample_every;
     for (i, (topology, senders, receivers)) in topologies(cfg).into_iter().enumerate() {
         if i > 0 {
             // Cool down between topology groups when asked (see `cooldown`).
@@ -406,6 +456,10 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
                     if !supports_throughput(krate, combo, receivers, cap) {
                         continue;
                     }
+                    // Per-iteration histograms, merged after the cell leaves
+                    // the timed region (merging inside would bill microseconds
+                    // to every iteration).
+                    let mut cell_hists = Vec::new();
                     group.bench_function(bench_id(combo, cap, krate), |b| {
                         b.iter_batched(
                             || {
@@ -424,9 +478,30 @@ fn throughput_groups(c: &mut Criterion, cfg: &Config, overrides: SamplingOverrid
                             },
                             // The transfer happens (and completes) on join:
                             // the exact `t0`-after-spawn semantics of the old runner.
-                            |run| rt(cfg.worker_threads).block_on(run.join_all()),
+                            |run| {
+                                let (sent, received, hists) =
+                                    rt(cfg.worker_threads).block_on(run.join_all());
+                                cell_hists.extend(hists);
+                                (sent, received)
+                            },
                             BatchSize::PerIteration,
                         );
+                    });
+                    let mut merged =
+                        Histogram::<u64>::new(3).expect("3 significant digits always valid");
+                    for hist in &cell_hists {
+                        merged.add(hist).expect("identical histogram configs merge");
+                    }
+                    dists.push(CellDist {
+                        topology: topology_name(topology).to_string(),
+                        senders,
+                        receivers,
+                        combo: combo_token(combo).to_string(),
+                        cap: capacity_token(cap).to_string(),
+                        krate: crate_token(krate),
+                        messages_no: cfg.messages_no,
+                        sample_every,
+                        hist: merged,
                     });
                 }
             }

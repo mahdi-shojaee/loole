@@ -4,9 +4,10 @@ use std::{future::Future, thread};
 
 use crate::bench_utils::{
     ping_pong_latency, setup_ping_pong, BenchError, Combo, JoinHandle, LatencyChannel,
-    LatencyChannels, LatencyProbe, LatencyResult, ThroughputRun,
+    LatencyChannels, LatencyProbe, LatencyResult, ThroughputRun, record_stamp,
 };
-use crate::message_type::{AnyPayload, Message, PayloadKind};
+use crate::message_type::{AnyPayload, DistCtx, Message, PayloadKind};
+use hdrhistogram::Histogram;
 use tokio::runtime::Runtime;
 
 pub fn send(tx: &Sender<AnyPayload>, msg: AnyPayload) -> Result<(), SendError<AnyPayload>> {
@@ -39,12 +40,13 @@ fn setup_helper<S, R>(
     create_receiver: R,
 ) -> Result<ThroughputRun, BenchError>
 where
-    S: Fn(Sender<AnyPayload>, usize, usize, PayloadKind) -> JoinHandle<usize>,
-    R: Fn(Receiver<AnyPayload>) -> JoinHandle<usize>,
+    S: Fn(Sender<AnyPayload>, usize, usize, PayloadKind, DistCtx) -> JoinHandle<usize>,
+    R: Fn(Receiver<AnyPayload>, DistCtx) -> JoinHandle<(usize, Histogram<u64>)>,
 {
     let (tx, rx) = cap.map_or_else(unbounded::<AnyPayload>, bounded);
-    let senders = create_senders(tx, senders_no, msg_no, message_size, payload, create_sender);
-    let receivers = create_receivers(rx, receivers_no, create_receiver);
+    let dctx = DistCtx::new(msg_no);
+    let senders = create_senders(tx, senders_no, msg_no, message_size, payload, create_sender, dctx);
+    let receivers = create_receivers(rx, receivers_no, create_receiver, dctx);
     Ok(ThroughputRun { senders, receivers })
 }
 
@@ -55,14 +57,15 @@ fn create_senders<S>(
     message_size: usize,
     payload: PayloadKind,
     create_sender: S,
+    dctx: DistCtx,
 ) -> Vec<JoinHandle<usize>>
 where
-    S: Fn(Sender<AnyPayload>, usize, usize, PayloadKind) -> JoinHandle<usize>,
+    S: Fn(Sender<AnyPayload>, usize, usize, PayloadKind, DistCtx) -> JoinHandle<usize>,
 {
     let mut senders = Vec::with_capacity(senders_no);
     for i in 0..senders_no {
         let n = msg_no / senders_no + if i < msg_no % senders_no { 1 } else { 0 };
-        senders.push(create_sender(tx.clone(), n, message_size, payload));
+        senders.push(create_sender(tx.clone(), n, message_size, payload, dctx));
     }
     senders
 }
@@ -71,13 +74,14 @@ fn create_receivers<R>(
     rx: Receiver<AnyPayload>,
     receivers_no: usize,
     create_receiver: R,
-) -> Vec<JoinHandle<usize>>
+    dctx: DistCtx,
+) -> Vec<JoinHandle<(usize, Histogram<u64>)>>
 where
-    R: Fn(Receiver<AnyPayload>) -> JoinHandle<usize>,
+    R: Fn(Receiver<AnyPayload>, DistCtx) -> JoinHandle<(usize, Histogram<u64>)>,
 {
     let mut receivers = Vec::with_capacity(receivers_no);
     for _ in 0..receivers_no {
-        receivers.push(create_receiver(rx.clone()));
+        receivers.push(create_receiver(rx.clone(), dctx));
     }
     receivers
 }
@@ -87,13 +91,14 @@ fn create_sync_sender(
     n: usize,
     message_size: usize,
     payload: PayloadKind,
+    dctx: DistCtx,
 ) -> JoinHandle<usize> {
     JoinHandle::Sync(thread::spawn(move || {
         let mut error_count = 0;
         let mut sent_count = 0;
         let mut cache = None;
-        for _ in 0..n {
-            match send(&tx, AnyPayload::fresh(payload, message_size, &mut cache)) {
+        for seq in 0..n {
+            match send(&tx, AnyPayload::fresh(payload, message_size, &mut cache, seq as u64, dctx)) {
                 Ok(_) => sent_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -110,13 +115,14 @@ fn create_async_sender(
     n: usize,
     message_size: usize,
     payload: PayloadKind,
+    dctx: DistCtx,
 ) -> JoinHandle<usize> {
     JoinHandle::Async(tokio::spawn(async move {
         let mut error_count = 0;
         let mut sent_count = 0;
         let mut cache = None;
-        for _ in 0..n {
-            match send_async(&tx, AnyPayload::fresh(payload, message_size, &mut cache)).await {
+        for seq in 0..n {
+            match send_async(&tx, AnyPayload::fresh(payload, message_size, &mut cache, seq as u64, dctx)).await {
                 Ok(_) => sent_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -128,23 +134,27 @@ fn create_async_sender(
     }))
 }
 
-fn create_sync_receiver(rx: Receiver<AnyPayload>) -> JoinHandle<usize> {
+fn create_sync_receiver(rx: Receiver<AnyPayload>, dctx: DistCtx) -> JoinHandle<(usize, Histogram<u64>)> {
     JoinHandle::Sync(thread::spawn(move || {
         let mut received_count = 0;
-        while recv(&rx).is_ok() {
+        let mut hist = Histogram::<u64>::new(3).expect("3 significant digits always valid");
+        while let Ok(payload) = recv(&rx) {
             received_count += 1;
+            record_stamp(&mut hist, &dctx, &payload);
         }
-        received_count
+        (received_count, hist)
     }))
 }
 
-fn create_async_receiver(rx: Receiver<AnyPayload>) -> JoinHandle<usize> {
+fn create_async_receiver(rx: Receiver<AnyPayload>, dctx: DistCtx) -> JoinHandle<(usize, Histogram<u64>)> {
     JoinHandle::Async(tokio::spawn(async move {
         let mut received_count = 0;
-        while recv_async(&rx).await.is_ok() {
+        let mut hist = Histogram::<u64>::new(3).expect("3 significant digits always valid");
+        while let Ok(payload) = recv_async(&rx).await {
             received_count += 1;
+            record_stamp(&mut hist, &dctx, &payload);
         }
-        received_count
+        (received_count, hist)
     }))
 }
 

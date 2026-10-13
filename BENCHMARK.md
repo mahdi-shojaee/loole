@@ -42,6 +42,34 @@ as empty spots in the charts. Every dimension above is configurable — see
    suite automatically rebuilds `benchmark/charts/benchmark-result-{throughput,latency}-<size>.json`
    and re-renders the SVGs. Partial or failed runs never touch the charts;
    the suite prints the manual command instead. `shared` has no chart set.
+4. Throughput runs also record per-message queueing delays: every
+   `sample_every`-th message carries its send timestamp (see
+   [Sampling](#sampling) below) and each receiver task accumulates a local
+   latency histogram, merged per cell after the timed region. The run writes
+   one `target/criterion/runs/latency-dist-<size>-<payload>-<unix_ms>-<pid>.json`
+   sidecar with percentile tables (p10/p50/p95/p99/p99.9); the chart converter
+   rebuilds the `latency-dist-<size>.json` percentile charts from the newest
+   sidecar the same newest-wins way. Query any run directly, e.g.
+   `jq '.cells[] | select(.topology=="spsc")' target/criterion/runs/latency-dist-256-touched-*.json`.
+
+## Sampling
+
+Per-message timestamps cost two clock reads per sampled message, so sampling
+is systematic and derived — there is no sampling flag to mis-set. With `N`
+messages per cell and a fixed tail budget of ~10 samples at/above p99.9
+(the deepest charted quantile):
+
+```
+sample_every = max(1, N / 10_000)
+```
+
+i.e. every 10th message at N=100k (≈10k recorded samples per cell at any
+scale; tiny cells fall to a census). The stride, quantiles, and per-cell
+sample counts are recorded in the dist sidecar header, so every percentile
+table carries the budget that produced it. Sender counters are task-local
+(no shared atomic on the send path); the stamp is nanos since the cell's
+`t0` plus one, with 0 reserved as the untracked sentinel in the first 8
+payload bytes.
 
 ## Quick start
 
@@ -73,7 +101,7 @@ Suite options (each is also settable via its environment variable):
 | `--worker-threads` | | `BENCH_WORKER_THREADS` | `0` | tokio worker count (0 = one per CPU) |
 | `--isolate-crates` | | `BENCH_ISOLATE_CRATES` | off | one process per crate |
 | `--no-warmup-cell` | | `BENCH_NO_WARMUP_CELL` | off | skip pre-timing warmup |
-| `--payload` | | `BENCH_PAYLOAD` | `touched` | `touched` (a distinct fresh `Vec` per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic; the charted mode) or `shared` (one `Arc` per sender: channel-isolation control, not a workload model, never charted). The latency suite runs in `touched` mode; `shared` runs skip it (no owned-content probe). |
+| `--payload` | | `BENCH_PAYLOAD` | `touched` | `touched` (a distinct fresh `Vec` per send, every byte filled with a deterministic pattern — allocator-inclusive and cache-realistic; the charted mode) or `shared` (one `Arc` per sender: channel-isolation control, not a workload model, never charted). The latency suite runs in `touched` mode; `shared` runs skip it (no owned-content probe). Every `sample_every`-th message carries a send timestamp for the latency-distribution sidecar (see [Sampling](#sampling)). |
 
 All native criterion options pass straight through:
 
@@ -117,7 +145,8 @@ cargo bench -p benchmark --bench criterion_benchmarks -- --sample-size 40 --meas
 ## Charts
 
 Full bench runs update the charts automatically; the command below is the
-manual form — useful after a partial (filtered) run:
+manual form — useful after a partial (filtered) run. It rebuilds the
+estimate charts and, when a dist sidecar is present, the percentile charts:
 
 ```bash
 cd benchmark/charts

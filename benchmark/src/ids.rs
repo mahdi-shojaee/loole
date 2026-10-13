@@ -86,12 +86,17 @@ pub enum Topology {
 
 /// e.g. `spsc-s1r1`, `mpsc-s1000r1`, `mpmc-s1000r10`.
 pub fn topology_token(topology: Topology, senders: usize, receivers: usize) -> String {
-    let name = match topology {
+    let name = topology_name(topology);
+    format!("{name}-s{senders}r{receivers}")
+}
+
+/// Bare topology name for sidecars and logs.
+pub fn topology_name(topology: Topology) -> &'static str {
+    match topology {
         Topology::Spsc => "spsc",
         Topology::Mpsc => "mpsc",
         Topology::Mpmc => "mpmc",
-    };
-    format!("{name}-s{senders}r{receivers}")
+    }
 }
 
 /// The criterion *group* ID (workload-level): `<metric>-<size>-n<count>-<payload>`.
@@ -144,6 +149,13 @@ mod tests {
     fn metric_kind_tokens() {
         assert_eq!(MetricKind::Throughput.as_str(), "throughput");
         assert_eq!(MetricKind::Latency.as_str(), "latency");
+    }
+
+    #[test]
+    fn topology_names() {
+        assert_eq!(topology_name(Topology::Spsc), "spsc");
+        assert_eq!(topology_name(Topology::Mpsc), "mpsc");
+        assert_eq!(topology_name(Topology::Mpmc), "mpmc");
     }
 
     #[test]

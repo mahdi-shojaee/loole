@@ -40,7 +40,7 @@ echarts.setPlatformAPI({
   createCanvas() {},
 });
 
-function renderChart(data, chanType, benchType, metric) {
+function renderChart(data, chanType, benchType, metric, opts = {}) {
   const def = data[chanType][benchType];
   const source = def.dataset.source;
   const header = source[0];
@@ -55,8 +55,9 @@ function renderChart(data, chanType, benchType, metric) {
   // A 0 cell means the crate does not support that capacity/scenario
   // (e.g. async-channel/tokio at bounded(0), crossbeam in async scenarios);
   // null draws no bar instead of a misleading zero-height one.
+  const firstCol = opts.firstCol || "scenario";
   const filteredSource = [
-    ["scenario", ...crateNames],
+    [firstCol, ...crateNames],
     ...rows.map((row) => [row[0], ...keep.map((j) => (Number(row[j]) > 0 ? row[j] : null))]),
   ];
   const chart = echarts.init(null, null, {
@@ -68,7 +69,7 @@ function renderChart(data, chanType, benchType, metric) {
   const option = {
     animation: false,
     title: {
-      text: `${def.title} - ${metric} - ${messageSize} bytes`,
+      text: opts.title || `${def.title} - ${metric} - ${messageSize} bytes`,
       textStyle: {
         fontSize: 14,
       },
@@ -109,7 +110,7 @@ function renderChart(data, chanType, benchType, metric) {
   chart.setOption(option);
   const svgStr = chart.renderToSVGString();
   chart.dispose();
-  fs.writeFileSync(`images/${chanType}-${benchType}-${metric}-${messageSize}.svg`, svgStr);
+  fs.writeFileSync(opts.out || `images/${chanType}-${benchType}-${metric}-${messageSize}.svg`, svgStr);
 }
 
 function renderMetric(metric) {
@@ -126,5 +127,27 @@ function renderMetric(metric) {
   }
 }
 
+// Latency-distribution charts from latency-dist-<size>.json (see
+// dist-charts.js): one chart per (topology, combo), quantile rows.
+function renderDist() {
+  const jsonPath = `./latency-dist-${messageSize}.json`;
+  if (!fs.existsSync(jsonPath)) {
+    console.log(`no latency-dist results for ${messageSize} bytes; skipping dist charts`);
+    return;
+  }
+  const data = require(jsonPath);
+  for (const topo of Object.keys(data)) {
+    for (const combo of Object.keys(data[topo])) {
+      const def = data[topo][combo];
+      renderChart(data, topo, combo, "latency", {
+        out: `images/${topo}-${combo}-latency-dist-${messageSize}.svg`,
+        title: `${def.title} (${combo}) - per-message latency distribution - ${messageSize} bytes (touched)`,
+        firstCol: "quantile",
+      });
+    }
+  }
+}
+
 renderMetric("throughput");
 renderMetric("latency");
+renderDist();

@@ -4,10 +4,11 @@
 
 use std::{error::Error, fmt::Display, future::Future, thread, time::Instant};
 
+use hdrhistogram::Histogram;
 use tokio::runtime::Runtime;
 
 use crate::config::{DEFAULT_LATENCY_ROUNDS, DEFAULT_LATENCY_WARMUP};
-use crate::message_type::Message;
+use crate::message_type::{AnyPayload, DistCtx, Message};
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
@@ -70,22 +71,33 @@ impl Combo {
 /// hand-rolled timer had.
 pub struct ThroughputRun {
     pub senders: Vec<JoinHandle<usize>>,
-    pub receivers: Vec<JoinHandle<usize>>,
+    /// Receivers return their count plus their local latency histogram: one
+    /// histogram per task keeps recording contention-free; callers merge
+    /// outside the timed region.
+    pub receivers: Vec<JoinHandle<(usize, Histogram<u64>)>>,
 }
 
 impl ThroughputRun {
     /// Joins senders then receivers and asserts every message was received.
-    pub async fn join_all(self) -> (usize, usize) {
+    /// Returns the counts plus one latency histogram per receiver task.
+    /// Callers merge histograms *outside* the timed region (merging inside
+    /// would bill microseconds to every iteration): histograms are
+    /// associative under merge, so per-iteration merges and one final merge
+    /// give identical distributions.
+    pub async fn join_all(self) -> (usize, usize, Vec<Histogram<u64>>) {
         let mut sent = 0;
         for s in self.senders {
             sent += s.join().await;
         }
         let mut received = 0;
+        let mut hists = Vec::with_capacity(self.receivers.len());
         for r in self.receivers {
-            received += r.join().await;
+            let (n, hist) = r.join().await;
+            received += n;
+            hists.push(hist);
         }
         assert_eq!(sent, received);
-        (sent, received)
+        (sent, received, hists)
     }
 }
 
@@ -141,6 +153,22 @@ where
     fn send_async(tx: &Self::Sender, msg: T) -> impl Future<Output = ()> + Send + '_;
 
     fn recv_async(rx: &mut Self::Receiver) -> impl Future<Output = Option<T>> + Send + '_;
+}
+
+/// Records one received message's queueing delay into a per-task histogram,
+/// if the message carries a send stamp: the stamp counts nanos since the
+/// cell's `t0`, so the delay is now minus the stamp. Untracked messages
+/// (zero prefix, short payloads, shared mode) record nothing — the common
+/// path is a single 8-byte compare on an already-hot cache line, and only
+/// sampled messages pay a clock read.
+pub fn record_stamp(hist: &mut Histogram<u64>, dctx: &DistCtx, payload: &AnyPayload) {
+    if let Some(stamp) = payload.send_stamp_nanos() {
+        let now = dctx.t0.elapsed().as_nanos() as u64;
+        // `stamp` is send_nanos + 1 (0 = untracked sentinel, filtered above).
+        let delta = now.saturating_sub(stamp - 1);
+        // Fails only above the maximum trackable value (u64::MAX): impossible.
+        let _ = hist.record(delta);
+    }
 }
 
 /// A prepared ping-pong measurement: echoer live, warm-up done. Running the

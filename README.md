@@ -89,47 +89,11 @@ bytes are all touched (see [BENCHMARK.md](BENCHMARK.md)).
 
 ## Benchmark Results
 
-A separate `unbounded` chart shows the unbounded configuration.
+Results live in two files (kept separate so the package front page stays lean):
 
-### Throughput
-
-The number of messages received per second (higher is better).
-
-#### MPSC
-
-![MPSC: sync-sync](benchmark/charts/images/mpsc-sync-sync-throughput-256.svg)
-![MPSC: async-async](benchmark/charts/images/mpsc-async-async-throughput-256.svg)
-![MPSC: async-sync](benchmark/charts/images/mpsc-async-sync-throughput-256.svg)
-![MPSC: sync-async](benchmark/charts/images/mpsc-sync-async-throughput-256.svg)
-![MPSC: unbounded](benchmark/charts/images/mpsc-unbounded-throughput-256.svg)
-
-#### MPMC
-
-![MPMC: sync-sync](benchmark/charts/images/mpmc-sync-sync-throughput-256.svg)
-![MPMC: async-async](benchmark/charts/images/mpmc-async-async-throughput-256.svg)
-![MPMC: async-sync](benchmark/charts/images/mpmc-async-sync-throughput-256.svg)
-![MPMC: sync-async](benchmark/charts/images/mpmc-sync-async-throughput-256.svg)
-![MPMC: unbounded](benchmark/charts/images/mpmc-unbounded-throughput-256.svg)
-
-#### SPSC
-
-![SPSC: sync-sync](benchmark/charts/images/spsc-sync-sync-throughput-256.svg)
-![SPSC: async-async](benchmark/charts/images/spsc-async-async-throughput-256.svg)
-![SPSC: async-sync](benchmark/charts/images/spsc-async-sync-throughput-256.svg)
-![SPSC: sync-async](benchmark/charts/images/spsc-sync-async-throughput-256.svg)
-![SPSC: unbounded](benchmark/charts/images/spsc-unbounded-throughput-256.svg)
-
-### Latency
-
-Latency is the round-trip time in nanoseconds (lower is better) for a single sender/receiver pair exchanging messages back and forth across two channels (one forward, one back).
-
-#### SPSC
-
-![SPSC: sync-sync latency](benchmark/charts/images/spsc-sync-sync-latency-256.svg)
-![SPSC: async-async latency](benchmark/charts/images/spsc-async-async-latency-256.svg)
-![SPSC: async-sync latency](benchmark/charts/images/spsc-async-sync-latency-256.svg)
-![SPSC: sync-async latency](benchmark/charts/images/spsc-sync-async-latency-256.svg)
-![SPSC: unbounded latency](benchmark/charts/images/spsc-unbounded-latency-256.svg)
+- [Throughput](THROUGHPUT-RESULTS.md) — messages/s per topology and combo.
+- [Latency](LATENCY-RESULTS.md) — SPSC ping-pong round trips plus per-message
+  queueing-delay distributions under load.
 
 ## License
 

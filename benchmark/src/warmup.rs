@@ -16,7 +16,8 @@ use crate::message_type::PayloadKind;
 /// in tests — here return the counts and let the caller decide.
 pub fn run_once(rt: &Runtime, krate: CrateName, msg_no: usize) -> Option<(usize, usize)> {
     let run = setup_throughput(rt, krate, Combo::AsyncAsync, 1, 1, Some(10), msg_no, 256, PayloadKind::Touched).ok()?;
-    Some(rt.block_on(run.join_all()))
+    let (sent, received, _dist) = rt.block_on(run.join_all());
+    Some((sent, received))
 }
 
 #[cfg(test)]
