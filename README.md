@@ -51,9 +51,8 @@ fn main() {
 ## Why Loole?
 
 * **Featureful**: Unbounded, bounded and rendezvous channels
-* **Safe**: No unsafe code: `#![forbid(unsafe_code)]`!
+* **Safe**: no `unsafe` code (`#![forbid(unsafe_code)]`)
 * **Capable**: Send and receive operations can be blocking (sync) or non-blocking (async)
-* **Familiar**: Follows the API conventions of popular async channel crates
 * **Simple**: Minimal dependencies, fast to compile
 
 ## Usage
@@ -61,7 +60,7 @@ fn main() {
 To use Loole, place the following line under the `[dependencies]` section in your `Cargo.toml`:
 
 ```toml
-loole = "0.6.0"
+loole = "0.6"
 ```
 
 ## Run Benchmarks

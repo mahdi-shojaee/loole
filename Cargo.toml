@@ -5,6 +5,11 @@ members = ["benchmark"]
 name = "loole"
 version = "0.6.0"
 edition = "2021"
+# Verified floor: library and test suite both build on 1.85. (The library
+# alone builds back to 1.84; the test tree needs 1.85 because cargo only
+# learned to parse edition2024 manifests — used by transitive dev-deps via
+# rand 0.10 -> chacha20 -> cpufeatures — in that version.)
+rust-version = "1.85"
 description = "A safe async/sync multi-producer, multi-consumer channel"
 repository = "https://github.com/mahdi-shojaee/loole"
 documentation = "https://docs.rs/loole"

@@ -11,6 +11,16 @@ Measurements are driven by [Criterion.rs](https://github.com/bheisler/criterion.
 warm-up, statistical sampling, outlier detection, confidence intervals, and
 run-to-run regression reports (`target/criterion/report/`) come built in.
 
+- [Default workload](#default-workload)
+- [How it works](#how-it-works)
+- [Sampling](#sampling)
+- [Quick start](#quick-start)
+- [Options](#options)
+- [Examples](#examples)
+- [Charts](#charts)
+- [Regression tracking](#regression-tracking)
+- [Machine descriptor](#machine-descriptor)
+
 ## Default workload
 
 | Dimension | Values |
