@@ -76,11 +76,17 @@ Measurements are driven by [Criterion.rs](https://github.com/bheisler/criterion.
 
 Reference numbers were measured on Ubuntu Server 26.04.1 LTS with an Intel
 Core i7-13700K (each run records its toolchain in its machine descriptor,
-`target/criterion/runs/machine-*.json`, field `rustc_version`):
+`target/criterion/runs/machine-*.json`, field `rustc_version`). The committed
+chart sets were generated with this command:
 
 ```bash
 taskset -c "0,2,4,6,8,10,12,14" cargo bench -p benchmark --bench criterion_benchmarks -- --worker-threads 8 --crates "flume async-channel tokio kanal crossbeam-channel loole" --isolate-crates --sample-size 10 --measurement-time 5 --warm-up-time 0.5 -m 256
 ```
+
+The `taskset -c "0,2,4,6,8,10,12,14"` prefix pins threads to P-cores and is
+Linux-only (Windows has a PowerShell affinity equivalent). Adapt the CPU list
+to the target machine. On macOS there is no CPU-pinning equivalent — run
+the bare `cargo bench …` line and prefer pinned runs for verdicts.
 
 The charts below render the default `touched` mode: each message is a
 distinct allocation with every byte filled, modeling real payloads whose

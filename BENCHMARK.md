@@ -203,5 +203,7 @@ interval) at the end of the run; the full plots live under
 
 Every invocation writes `target/criterion/runs/machine-<size>-<payload>-<unix_ms>-<pid>.json`
 (governor, per-CPU frequencies, topology, process affinity, load, memory, git
-SHA + dirty flag, toolchain (`rustc_version`), full invocation and `BENCH_*` env). Attach it to any
+SHA + dirty flag, toolchain (`rustc_version`), full invocation and `BENCH_*` env). Governor,
+per-CPU frequencies, and affinity are read from Linux interfaces and record
+`"unknown"` on other OSes; the run never fails for it. Attach it to any
 published number; check it first whenever a ranking flips between runs.
